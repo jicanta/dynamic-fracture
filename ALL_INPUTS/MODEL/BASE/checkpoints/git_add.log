@@ -1,0 +1,3 @@
+remove 'ALL_INPUTS/MODEL/BASE/checkpoints/ep070-val0.0004.keras'
+add 'ALL_INPUTS/MODEL/BASE/checkpoints/base_ep070-val0.0004.keras'
+add 'ALL_INPUTS/MODEL/BASE/checkpoints/git_add.log'
