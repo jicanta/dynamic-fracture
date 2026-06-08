@@ -28,6 +28,8 @@ def csv_dataset_from_directory(
     add_velocity=True,
     velocity_scale=1.0 / 1000.0,
     ignore_bad_files=False,
+    # --- performance ---
+    cache_parsed_csvs=True,
     # --- cleanup + diagnostics ---
     drop_first_csv=True,
     print_run_stats=True,
@@ -141,6 +143,25 @@ def csv_dataset_from_directory(
         raise ValueError(f"Cannot parse frame index from: {path}")
 
     # -----------------------------
+    # 2b) Parsed-CSV cache
+    # -----------------------------
+    # Overlapping sliding windows (shift=1, length T) reference each frame in up
+    # to ~2*T windows per epoch, and tf.data re-runs the map every epoch. Without
+    # caching, every reference re-parses the same file from disk. Memoizing the
+    # parsed + SED-standardized DataFrame makes each file read at most once while
+    # returning the exact same object the old path produced (identical numerics).
+    _csv_cache: Dict[str, pd.DataFrame] = {}
+
+    def _read_csv_standardized(path: str) -> pd.DataFrame:
+        if not cache_parsed_csvs:
+            return _standardize_sed_inplace(pd.read_csv(path))
+        df = _csv_cache.get(path)
+        if df is None:
+            df = _standardize_sed_inplace(pd.read_csv(path))
+            _csv_cache[path] = df
+        return df
+
+    # -----------------------------
     # 3) Group by run folder
     # -----------------------------
     runs: Dict[str, List[str]] = {}
@@ -183,8 +204,7 @@ def csv_dataset_from_directory(
 
     for p in all_paths:
         try:
-            tmp = pd.read_csv(p)
-            tmp = _standardize_sed_inplace(tmp)  # <-- SED/a_pos normalization
+            tmp = _read_csv_standardized(p)
             num_points = len(tmp)
             first_good = p
             first_df = tmp
@@ -280,8 +300,7 @@ def csv_dataset_from_directory(
             ok = 0
             for p in scan_paths:
                 try:
-                    df = pd.read_csv(p)
-                    df = _standardize_sed_inplace(df)  # <-- SED/a_pos normalization
+                    df = _read_csv_standardized(p)
 
                     if len(df) != num_points:
                         raise ValueError(f"{p} has {len(df)} rows, expected {num_points}")
@@ -363,8 +382,7 @@ def csv_dataset_from_directory(
         X_seq, y_seq = [], []
 
         for p in in_paths:
-            df = pd.read_csv(p)
-            df = _standardize_sed_inplace(df)  # <-- SED/a_pos normalization
+            df = _read_csv_standardized(p)
 
             if len(df) != num_points:
                 raise ValueError(f"{p} has {len(df)} rows, expected {num_points}")
@@ -382,8 +400,7 @@ def csv_dataset_from_directory(
             X_seq.append(feats)
 
         for p in out_paths:
-            df = pd.read_csv(p)
-            df = _standardize_sed_inplace(df)  # <-- SED/a_pos normalization
+            df = _read_csv_standardized(p)
 
             if len(df) != num_points:
                 raise ValueError(f"{p} has {len(df)} rows, expected {num_points}")
