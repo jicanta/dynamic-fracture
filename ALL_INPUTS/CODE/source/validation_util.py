@@ -26,10 +26,16 @@ def split_train_val_by_batches(
             f"validation_fraction must be in (0,1). Got {validation_fraction}"
         )
 
-    total_batches = train_dataset.reduce(
-        tf.constant(0, dtype=tf.int64),
-        lambda acc, _: acc + 1
-    ).numpy()
+    # Prefer the statically known batch count, which reads nothing. Fall back to
+    # a full scan only when cardinality is unknown/infinite (e.g. a pipeline that
+    # applied ignore_errors), so the resulting count -- and therefore the split --
+    # is identical to the original reduce-based count in every case.
+    total_batches = train_dataset.cardinality().numpy()
+    if total_batches < 0:  # UNKNOWN_CARDINALITY (-2) or INFINITE_CARDINALITY (-1)
+        total_batches = train_dataset.reduce(
+            tf.constant(0, dtype=tf.int64),
+            lambda acc, _: acc + 1
+        ).numpy()
 
     val_batches = max(min_val_batches, int(total_batches * validation_fraction))
 
