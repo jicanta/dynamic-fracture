@@ -77,6 +77,9 @@ def discover_runs(top_dir: Path) -> Dict[str, List[Path]]:
     of each run if requested by the caller (handled in preprocess_run)."""
     runs: Dict[str, List[Path]] = {}
     for p in sorted(top_dir.rglob("*.csv")):
+        # skip hidden dirs (e.g. Jupyter's .ipynb_checkpoints copies of CSVs)
+        if any(part.startswith(".") for part in p.relative_to(top_dir).parts):
+            continue
         runs.setdefault(p.parent.name, []).append(p)
     return runs
 
