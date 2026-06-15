@@ -9,31 +9,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import List, Optional
 
 
-# Same test-case mapping as ALL_INPUTS/CODE/source/build_datasets.py.
-# Keys are short names used in OUTPUTS/, values are folder names inside DATASET/.
-TEST_CASE_FOLDERS = {
-    "test_MS206_V100": "F_MS206_V100_out",
-    "test_MS206_V200": "F_MS206_V200_out",
-    "test_MS206_V400": "F_MS206_V400_out",
-    "test_MS206_V1000": "F_MS206_V1000_out",
-    "test_MS210_V400": "F_MS210_V400_out",
-    "test_PBX1_V400_true": "F_PBX1_V400_true",
-    "test_PBX_2_V400": "F_PBX_2_V400_out",
-    "test_MS5_V150ms_inc": "MS5_V150ms_inc",
-    "test_MS5_V400ms": "MS205_V400ms_MS5",
-    "test_emergency_horizontal": "F_emergency_horizontal_out",
-    "test_horizontal_layers_3": "F_horizontal-layers_3_out",
-    "test_horizontal_layers_4": "F_horizontal-layers_4_out",
-    "test_inclusions_1_2": "F_inclusions_1_2_out",
-    "test_inclusions_2_2": "F_inclusions_2_2_out",
-    "test_inclusions_3_2": "F_inclusions_3_2_out",
-    "test_inclusions_true_V400": "F_inclusions_true_V400",
-}
+# Test-case mapping is now owned by the framework-free repo-root registry so the
+# former hand-synced copies (this file + kathleens-model/source/build_datasets.py)
+# can no longer drift (T-02-01). Mirrors the import shim used in build_datasets.py.
+REPO_ROOT = Path(__file__).resolve().parents[2]   # src -> new_model -> dynamic-fracture
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from case_registry import TEST_CASE_FOLDERS  # noqa: E402  (re-export; keys used in OUTPUTS/)
 
 EXTRA_CHOICES = ("none", "pressure", "vonmises", "SED")
 
@@ -53,6 +41,8 @@ class Config:
     velocity_scale: float = 1e-3           # folder velocity * this
     drop_first_csv: bool = True
     val_fraction: float = 0.1              # temporal tail of each run held out
+    balance_velocity: bool = False         # equalize training sampling across
+                                           # impact velocities (slow runs are rare)
     batch_size: int = 4
     num_workers: int = 4
 
@@ -68,11 +58,29 @@ class Config:
     dice_weight: float = 1.0
     focal_weight: float = 0.0              # optional, off by default
     pos_weight: float = 1.0                # BCE positive-class weight
+    growth_weight: float = 0.0             # extra BCE weight on newly-fractured
+                                           # pixels vs the previous frame (0 = off)
+    # Focal-Tversky: recall-oriented overlap loss. beta>alpha penalizes false
+    # negatives more (fixes P>>R). 0 weight = off; a drop-in for dice_weight.
+    tversky_weight: float = 0.0
+    tversky_alpha: float = 0.3             # false-positive weight
+    tversky_beta: float = 0.7             # false-negative weight (recall knob)
+    tversky_gamma: float = 1.0             # focal exponent (1.0 = plain Tversky)
 
     # ---- optimization ----
     epochs_stage1: int = 60                # teacher-forced
     epochs_stage2: int = 15                # autoregressive fine-tuning
     rollout_steps: int = 4                 # AR steps per sample in stage 2
+    # Scheduled sampling for stage-2 rollout: probability of feeding the model
+    # its OWN prediction back (vs ground truth). Annealed ss_start -> ss_end
+    # across stage 2 so early epochs stay near teacher-forcing and late epochs
+    # match the fully-autoregressive eval protocol.
+    ss_start: float = 0.5
+    ss_end: float = 1.0
+    # Accumulate predictions with a running max during the training/val rollout
+    # so the fed-back mask matches eval's no-healing state. Defaults to
+    # enforce_no_healing when left at -1.
+    rollout_no_healing: int = -1           # -1 = follow enforce_no_healing; 0/1 = override
     lr: float = 1e-3
     lr_stage2: float = 1e-4
     weight_decay: float = 1e-2
@@ -84,9 +92,21 @@ class Config:
 
     # ---- validation / selection ----
     val_rollout_steps: int = 5             # short AR rollout used for model selection
+    val_macro_velocity: bool = False       # macro-average val F1 across velocity
+                                           # groups so slow runs count equally
+
+    # ---- validation / threshold calibration ----
+    calibrate_threshold: bool = True       # after training, pick the val-AR
+                                           # F1-optimal decision threshold
+    thr_min: float = 0.2
+    thr_max: float = 0.8
+    thr_steps: int = 25                    # grid points in [thr_min, thr_max]
 
     # ---- evaluation ----
     eval_threshold: float = 0.5
+    use_calibrated_threshold: bool = True  # if calibration.json exists and the
+                                           # CLI threshold is the default, use it
+    eval_dir_name: str = "eval"            # output subdir; change for threshold sweeps
     enforce_no_healing: bool = True
     viz_every: int = 25                    # save GT|pred comparison every N frames
     cases: List[str] = field(default_factory=list)  # empty = all available
