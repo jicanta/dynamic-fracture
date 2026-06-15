@@ -16,6 +16,21 @@ def seed_everything(seed: int) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    # D-14: make cuDNN deterministic for reproducible runs. Intentionally do NOT
+    # force the global deterministic-algorithms mode — it makes conv backward raise
+    # on some ops (Pitfall 5); these two cuDNN flags are the safe/sufficient controls.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def sha256_file(path) -> str:
+    """Streaming SHA256 hex digest of a file, for checkpoint provenance (D-14)."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def get_device() -> torch.device:

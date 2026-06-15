@@ -308,6 +308,16 @@ class WindowDataset(Dataset):
     L = sequence_length + rollout_steps. Targets are derived from channel 0
     (fracture mask) of later frames by the training loop, exactly as the
     original pipeline derived y from the same CSV mask column.
+
+    Train/val split definition (D-08/D-10, frame-boundary form):
+      Per run, one frame boundary ``f_cut = round(n_frames * (1 - val_fraction))``
+      is chosen ONCE, independent of window_len. A window starting at ``s`` spans
+      frames ``[s, s + window_len - 1]``. Train windows are those whose LAST frame
+      is < f_cut; val windows are those whose FIRST frame is >= f_cut. Windows that
+      straddle f_cut are dropped — that dropped band (``window_len - 1`` frames wide)
+      IS the guard gap, so no train and val window can share a frame. Because the
+      boundary is on frames (not on a per-dataset window count), the disjointness
+      holds simultaneously for every window_len (T+1, L_train, L_val).
     """
 
     def __init__(self, runs: List[RunCache], assembler: FrameAssembler,
@@ -315,20 +325,25 @@ class WindowDataset(Dataset):
         self.runs = runs
         self.assembler = assembler
         self.window_len = int(window_len)
+        self.val_fraction = float(val_fraction)
         self.index: List[Tuple[int, int]] = []
 
         for ri, run in enumerate(runs):
             n_windows = run.n_frames - self.window_len + 1
             if n_windows <= 0:
                 continue
-            cut = int(round(n_windows * (1.0 - val_fraction)))
-            if split == "train":
-                starts = range(0, cut)
-            elif split == "val":
-                starts = range(cut, n_windows)
-            else:
-                starts = range(0, n_windows)
-            self.index.extend((ri, s) for s in starts)
+            # ONE per-run frame boundary, window_len-independent (C-04).
+            f_cut = int(round(run.n_frames * (1.0 - val_fraction)))
+            for s in range(n_windows):
+                last = s + self.window_len - 1
+                if split == "train":
+                    if last < f_cut:                 # whole window before the cut
+                        self.index.append((ri, s))
+                elif split == "val":
+                    if s >= f_cut:                   # whole window at/after the cut
+                        self.index.append((ri, s))
+                else:                                # "all": no split
+                    self.index.append((ri, s))
 
         if not self.index:
             raise ValueError(f"No windows produced (split={split}, L={self.window_len}). "
@@ -337,7 +352,41 @@ class WindowDataset(Dataset):
     def __len__(self) -> int:
         return len(self.index)
 
+    def window_velocities(self) -> np.ndarray:
+        """Impact velocity of the run each window comes from (per window)."""
+        return np.array([self.runs[ri].velocity for ri, _ in self.index],
+                        dtype=np.float64)
+
     def __getitem__(self, i: int) -> torch.Tensor:
         ri, start = self.index[i]
         arr = self.assembler.frames(self.runs[ri], start, start + self.window_len)
         return torch.from_numpy(arr)
+
+
+def assert_split_disjoint(runs: List[RunCache], val_fraction: float,
+                          window_len: int) -> None:
+    """Assert the frame-boundary split leaves train and val windows disjoint (D-10).
+
+    For the given ``window_len`` builds the train and val window index sets the same
+    way WindowDataset does, then per run checks that the last frame touched by any
+    train window is strictly before the first frame touched by any val window.
+    Raises ValueError (data.py error style) on any overlap. Runs that contribute no
+    train OR no val windows at this window_len are skipped (nothing to compare).
+    """
+    w = int(window_len)
+    for ri, run in enumerate(runs):
+        n_windows = run.n_frames - w + 1
+        if n_windows <= 0:
+            continue
+        f_cut = int(round(run.n_frames * (1.0 - val_fraction)))
+        train_starts = [s for s in range(n_windows) if s + w - 1 < f_cut]
+        val_starts = [s for s in range(n_windows) if s >= f_cut]
+        if not train_starts or not val_starts:
+            continue
+        tr_last = max(s + w - 1 for s in train_starts)
+        val_first = min(val_starts)
+        if not (tr_last < val_first):
+            raise ValueError(
+                f"run {ri}: train/val frame overlap ({tr_last} >= {val_first}) "
+                f"at window_len={w}, val_fraction={val_fraction}"
+            )
