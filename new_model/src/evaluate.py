@@ -40,22 +40,13 @@ from PIL import Image
 from .config import Config, parse_config, TEST_CASE_FOLDERS
 from .data import RunCache, ensure_cache, load_runs, make_assembler
 from .model import build_model
-from .utils import amp_dtype, get_device, plot_metric_over_time, seed_everything
+from .utils import amp_dtype, get_device, plot_metric_over_time, seed_everything, sha256_file
+# Repo-root shared modules (config import above already put the repo root on
+# sys.path); both pipelines route per-frame emission through this one seam (D-11).
+from frac_metrics import per_frame_metrics, CANONICAL_COLUMNS  # noqa: E402
+from case_registry import assert_manifest                       # noqa: E402
 
 EPS = 1e-7
-
-
-def frame_metrics(gt_bin: np.ndarray, pred_bin: np.ndarray) -> Dict[str, float]:
-    tp = float(np.sum((pred_bin == 1) & (gt_bin == 1)))
-    tn = float(np.sum((pred_bin == 0) & (gt_bin == 0)))
-    fp = float(np.sum((pred_bin == 1) & (gt_bin == 0)))
-    fn = float(np.sum((pred_bin == 0) & (gt_bin == 1)))
-    prec = tp / (tp + fp) if tp + fp > 0 else 0.0
-    rec = tp / (tp + fn) if tp + fn > 0 else 0.0
-    f1 = 2 * prec * rec / (prec + rec) if prec + rec > 0 else 0.0
-    acc = (tp + tn) / max(tp + tn + fp + fn, 1.0)
-    return {"tp": tp, "tn": tn, "fp": fp, "fn": fn,
-            "precision": prec, "recall": rec, "f1": f1, "accuracy": acc}
 
 
 def save_mask_png(path: Path, mask: np.ndarray) -> None:
@@ -72,7 +63,7 @@ def save_compare_png(path: Path, gt: np.ndarray, pred: np.ndarray) -> None:
 
 @torch.no_grad()
 def evaluate_case(model, run: RunCache, assembler, cfg: Config, case_dir: Path,
-                  device, dtype) -> Optional[Dict]:
+                  device, dtype, checkpoint_sha256: Optional[str] = None) -> Optional[Dict]:
     T = cfg.sequence_length
     n = run.n_frames
     if n < T + 1:
@@ -104,20 +95,28 @@ def evaluate_case(model, run: RunCache, assembler, cfg: Config, case_dir: Path,
             state = pred_bin
 
         gt = torch.from_numpy(feats[t + 1, 0]).to(device)
-        prob_c = prob.clamp(EPS, 1 - EPS)
-        bce = -(gt * prob_c.log() + (1 - gt) * (1 - prob_c).log()).mean().item()
-
         state_np = state.cpu().numpy()
         gt_np = gt.cpu().numpy()
-        m = frame_metrics(gt_np, state_np)
+        prob_np = prob.detach().cpu().numpy()          # RAW probability (for BCE)
+        # Single shared seam (D-11): counts/precision/recall/f1/iou + BCE from
+        # one implementation, identical to the old pipeline's emission.
+        m = per_frame_metrics(gt_np, state_np, prob_np)
         TP += m["tp"]; TN += m["tn"]; FP += m["fp"]; FN += m["fn"]
-        bce_sum += bce
+        bce_sum += m["bce"]
 
         step = t - (T - 1)
-        rows.append({"frame_id": step, "frame_index": t + 1,
-                     "H": run.H, "W": run.W, "n_pixels": run.H * run.W,
-                     **{k: (int(m[k]) if k in ("tp", "tn", "fp", "fn") else m[k])
-                        for k in m}, "bce": bce})
+        acc = (m["tp"] + m["tn"]) / max(m["tp"] + m["tn"] + m["fp"] + m["fn"], 1.0)
+        rows.append({
+            # ---- canonical columns (D-13), exact names/order via CANONICAL_COLUMNS ----
+            "frame_idx": step,
+            "precision": m["precision"], "recall": m["recall"], "f1": m["f1"],
+            "iou": m["iou"], "bce": m["bce"],
+            # ---- extra provenance columns (allowed, A3) ----
+            "frame_id": step, "frame_index": t + 1,
+            "H": run.H, "W": run.W, "n_pixels": run.H * run.W,
+            "tp": int(m["tp"]), "tn": int(m["tn"]), "fp": int(m["fp"]), "fn": int(m["fn"]),
+            "accuracy": acc,
+        })
 
         save_mask_png(frames_dir / f"mask_{step:06d}.png", state_np)
         if cfg.viz_every > 0 and step % cfg.viz_every == 0:
@@ -129,6 +128,9 @@ def evaluate_case(model, run: RunCache, assembler, cfg: Config, case_dir: Path,
         window = torch.cat([window[1:], nxt[None]], dim=0)
 
     df = pd.DataFrame(rows)
+    # Canonical D-13 columns first (exact order), then extra provenance columns.
+    ordered = list(CANONICAL_COLUMNS) + [c for c in df.columns if c not in CANONICAL_COLUMNS]
+    df = df[ordered]
     df.to_csv(case_dir / "per_frame_metrics.csv", index=False)
     plot_metric_over_time(df, case_dir / "f1_over_time.png", y_col="f1", y_label="F1")
     plot_metric_over_time(df, case_dir / "bce_over_time.png", y_col="bce", y_label="BCE loss")
@@ -147,6 +149,9 @@ def evaluate_case(model, run: RunCache, assembler, cfg: Config, case_dir: Path,
         "elapsed_s": time.time() - t0,
         "threshold": cfg.eval_threshold,
         "enforce_no_healing": cfg.enforce_no_healing,
+        # ---- reproducibility provenance (D-14) ----
+        "seed": cfg.seed,
+        "checkpoint_sha256": checkpoint_sha256,
     }
     with open(case_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2)
@@ -155,9 +160,9 @@ def evaluate_case(model, run: RunCache, assembler, cfg: Config, case_dir: Path,
     return summary
 
 
-def write_reports(run_dir: Path) -> None:
+def write_reports(run_dir: Path, eval_dir_name: str = "eval") -> None:
     """Aggregate every eval/<case>/summary.json into total_metrics.csv + RESULTS.md."""
-    eval_dir = run_dir / "eval"
+    eval_dir = run_dir / eval_dir_name
     summaries = []
     for sj in sorted(eval_dir.glob("*/summary.json")):
         with open(sj) as f:
@@ -201,8 +206,9 @@ def write_reports(run_dir: Path) -> None:
         "Predicted masks: `eval/<case>/frames/`. "
         "Side-by-side GT|prediction snapshots: `eval/<case>/viz/`.",
     ]
-    (run_dir / "RESULTS.md").write_text("\n".join(lines) + "\n")
-    print(f"[eval] wrote {eval_dir / 'total_metrics.csv'} and {run_dir / 'RESULTS.md'}")
+    results_name = "RESULTS.md" if eval_dir_name == "eval" else f"RESULTS_{eval_dir_name}.md"
+    (run_dir / results_name).write_text("\n".join(lines) + "\n")
+    print(f"[eval] wrote {eval_dir / 'total_metrics.csv'} and {run_dir / results_name}")
     print(f"[eval] TOTAL micro F1 = {f1:.4f}")
 
 
@@ -215,6 +221,7 @@ def main(cfg: Config) -> None:
     ckpt_path = run_dir / "checkpoints" / "best.pt"
     if not ckpt_path.exists():
         raise FileNotFoundError(f"No checkpoint at {ckpt_path}. Train first.")
+    ckpt_sha = sha256_file(ckpt_path)                  # D-14 provenance
     state = torch.load(ckpt_path, map_location=device, weights_only=False)
 
     # rebuild the exact training config (extra channels, model size, T)
@@ -223,10 +230,23 @@ def main(cfg: Config) -> None:
     train_cfg.data_root = cfg.data_root
     train_cfg.cache_dir = cfg.cache_dir
     train_cfg.eval_threshold = cfg.eval_threshold
+    # Prefer the calibrated threshold unless the user passed a non-default one.
+    calib_path = run_dir / "calibration.json"
+    if (cfg.use_calibrated_threshold
+            and abs(cfg.eval_threshold - Config().eval_threshold) < 1e-9
+            and calib_path.exists()):
+        with open(calib_path) as f:
+            thr = float(json.load(f)["threshold"])
+        train_cfg.eval_threshold = thr
+        print(f"[eval] using calibrated threshold {thr:.3f} from {calib_path}")
+    train_cfg.eval_dir_name = cfg.eval_dir_name
     train_cfg.enforce_no_healing = cfg.enforce_no_healing
     train_cfg.viz_every = cfg.viz_every
     train_cfg.out_root = cfg.out_root
     train_cfg.run_name = cfg.run_name
+
+    # Fail loud (D-02) if any registered GT case folder is missing before caching.
+    assert_manifest(Path(train_cfg.data_root))
 
     wanted = cfg.cases if cfg.cases else list(TEST_CASE_FOLDERS.keys())
     folders = [TEST_CASE_FOLDERS[c] for c in wanted if c in TEST_CASE_FOLDERS]
@@ -250,10 +270,11 @@ def main(cfg: Config) -> None:
                   f"{Path(train_cfg.data_root) / TEST_CASE_FOLDERS[case]}, skipped")
             continue
         for run in runs:  # normally one run folder per test case
-            case_dir = run_dir / "eval" / case
-            evaluate_case(model, run, assembler, train_cfg, case_dir, device, dtype)
+            case_dir = run_dir / cfg.eval_dir_name / case
+            evaluate_case(model, run, assembler, train_cfg, case_dir, device, dtype,
+                          checkpoint_sha256=ckpt_sha)
 
-    write_reports(run_dir)
+    write_reports(run_dir, cfg.eval_dir_name)
 
 
 if __name__ == "__main__":

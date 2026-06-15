@@ -23,8 +23,11 @@ import torch
 from torch.utils.data import DataLoader
 
 from .config import Config, parse_config, TEST_CASE_FOLDERS
+# Repo root is placed on sys.path by the config import above (Plan 02 shim), so
+# the shared metric seam (D-11) is importable here for threshold calibration.
+from frac_metrics import per_frame_metrics  # noqa: E402
 from .data import WindowDataset, ensure_cache, load_runs, make_assembler
-from .losses import SegLoss, binary_f1
+from .losses import SegLoss, binary_f1, growth_mask
 from .model import build_model
 from .utils import (CSVLogger, EMA, amp_dtype, cosine_warmup_lr,
                     count_parameters, get_device, plot_training_curves,
@@ -34,19 +37,31 @@ from .utils import (CSVLogger, EMA, amp_dtype, cosine_warmup_lr,
 # ----------------------------------------------------------------------
 # Rollout core (shared by stage-2 training and validation)
 # ----------------------------------------------------------------------
-def rollout_losses(model, batch, T, n_steps, criterion, *, feedback_hard=True):
+def rollout_losses(model, batch, T, n_steps, criterion, *, feedback_hard=True,
+                   ss_prob=1.0, no_healing=False):
     """batch: (B, L, C, H, W) with L >= T + n_steps.
 
     Step 0 is teacher-forced over the full window (dense supervision).
     Steps k>=1 slide the window by one frame and overwrite the mask channel of
-    every frame the model has already predicted with its own prediction.
-    Returns (total_loss, last_step_logits, last_step_target).
+    every frame the model has already predicted with the fed-back mask.
+
+    The fed-back mask mirrors the evaluation protocol:
+      * no_healing: keep a running max so a fractured pixel stays fractured,
+        exactly as evaluate_case does (state = max(state, pred)). Without this
+        the model never sees the monotone state it is scored on.
+      * ss_prob: scheduled sampling -- per sample, with probability ss_prob feed
+        the model's OWN prediction back, else feed ground truth. ss_prob=1.0 is
+        fully autoregressive (matches eval); lower values ease the model into
+        long rollouts. Annealed toward 1.0 over stage 2.
+
+    Returns (mean_loss, last_step_fed_mask, last_step_target).
     """
     B, L, C, H, W = batch.shape
     assert L >= T + n_steps
 
     losses = []
-    preds = {}  # global frame idx -> (B, H, W) predicted mask probability
+    preds = {}   # global frame idx -> (B, H, W) fed-back mask
+    acc = None   # running no-healing state at the last predicted frame
 
     for k in range(n_steps):
         window = batch[:, k:k + T].clone()
@@ -58,15 +73,25 @@ def rollout_losses(model, batch, T, n_steps, criterion, *, feedback_hard=True):
 
         if k == 0:
             target = batch[:, 1:T + 1, 0:1]          # masks t+1..t+T
-            losses.append(criterion(logits, target))
+            new = growth_mask(target, batch[:, 0:T, 0:1])
+            losses.append(criterion(logits, target, new_mask=new))
         else:
             target = batch[:, k + T:k + T + 1, 0:1]  # mask of the new frame only
-            losses.append(criterion(logits[:, -1:], target))
+            new = growth_mask(target, batch[:, k + T - 1:k + T, 0:1])
+            losses.append(criterion(logits[:, -1:], target, new_mask=new))
 
         p = torch.sigmoid(logits[:, -1, 0])          # prob of frame k+T
         if feedback_hard:
             # straight-through: binary forward (matches eval), soft gradient
             p = (p > 0.5).float() + p - p.detach()
+        if no_healing:
+            prev = acc if acc is not None else batch[:, T - 1, 0]
+            p = torch.maximum(prev, p)
+        acc = p
+        if ss_prob < 1.0:
+            gt = batch[:, k + T, 0]
+            use_pred = (torch.rand(B, 1, 1, device=batch.device) < ss_prob).to(p.dtype)
+            p = use_pred * p + (1.0 - use_pred) * gt
         preds[k + T] = p
 
     last_target = batch[:, n_steps + T - 1, 0]
@@ -75,26 +100,104 @@ def rollout_losses(model, batch, T, n_steps, criterion, *, feedback_hard=True):
 
 # ----------------------------------------------------------------------
 @torch.no_grad()
-def validate(model, loader, T, criterion, device, dtype, val_rollout_steps):
+def validate(model, loader, T, criterion, device, dtype, val_rollout_steps,
+             *, macro_velocity=False, vel_channel=None, no_healing=False):
+    """If macro_velocity, F1 is averaged per velocity group first so slow runs
+    (few windows, sparse fracture) weigh as much as fast ones in selection."""
     model.eval()
     tot_loss, n = 0.0, 0
-    f1_tf, f1_ar = [], []
+    recs = []  # (velocity, f1_tf, f1_ar) per sample
     for batch in loader:
         batch = batch.to(device, non_blocking=True)
         with torch.autocast(device.type, dtype=dtype, enabled=dtype is not None):
             # teacher-forced loss + last-frame F1
             logits = model(batch[:, :T])
             target = batch[:, 1:T + 1, 0:1]
-            tot_loss += criterion(logits, target).item() * batch.shape[0]
+            new = growth_mask(target, batch[:, 0:T, 0:1])
+            tot_loss += criterion(logits, target, new_mask=new).item() * batch.shape[0]
             n += batch.shape[0]
             pred_bin = (torch.sigmoid(logits[:, -1, 0]) > 0.5).float()
-            f1_tf.append(binary_f1(pred_bin, batch[:, T, 0]))
 
             # short AR rollout F1 (model-selection metric: matches the eval protocol)
             _, last_pred, last_tgt = rollout_losses(
-                model, batch, T, val_rollout_steps, criterion, feedback_hard=True)
-            f1_ar.append(binary_f1((last_pred > 0.5).float(), last_tgt))
-    return tot_loss / max(n, 1), float(np.mean(f1_tf)), float(np.mean(f1_ar))
+                model, batch, T, val_rollout_steps, criterion,
+                feedback_hard=True, no_healing=no_healing)
+            ar_bin = (last_pred > 0.5).float()
+        for i in range(batch.shape[0]):
+            vel = (round(batch[i, 0, vel_channel, 0, 0].item(), 6)
+                   if vel_channel is not None else 0.0)
+            recs.append((vel,
+                         binary_f1(pred_bin[i], batch[i, T, 0]),
+                         binary_f1(ar_bin[i], last_tgt[i])))
+    if macro_velocity:
+        groups = {}
+        for v, tf, ar in recs:
+            groups.setdefault(v, []).append((tf, ar))
+        f1_tf = float(np.mean([np.mean([t for t, _ in g]) for g in groups.values()]))
+        f1_ar = float(np.mean([np.mean([a for _, a in g]) for g in groups.values()]))
+    else:
+        f1_tf = float(np.mean([t for _, t, _ in recs]))
+        f1_ar = float(np.mean([a for _, _, a in recs]))
+    return tot_loss / max(n, 1), f1_tf, f1_ar
+
+
+# ----------------------------------------------------------------------
+@torch.no_grad()
+def calibrate_threshold(model, loader, T, device, dtype, val_rollout_steps,
+                        thresholds, *, no_healing=True):
+    """Sweep the decision threshold on the val AR rollout and return the one
+    with the best micro-F1.
+
+    Mirrors evaluate_case: at each step the predicted mask is binarized at the
+    candidate threshold, optionally accumulated with a running max (no-healing),
+    and fed back. Because the threshold drives both feedback and scoring it is
+    swept end-to-end rather than on fixed probabilities. The grid stays modest
+    (a long full-rollout confirmation is what scripts/eval_sweep.sbatch is for).
+    """
+    model.eval()
+    stats = {float(thr): [0.0, 0.0, 0.0] for thr in thresholds}  # tp, fp, fn
+    for batch in loader:
+        batch = batch.to(device, non_blocking=True)
+        B, L, C, H, W = batch.shape
+        for thr in thresholds:
+            acc, preds = None, {}
+            with torch.autocast(device.type, dtype=dtype, enabled=dtype is not None):
+                for k in range(val_rollout_steps):
+                    window = batch[:, k:k + T].clone()
+                    for j in range(T):
+                        f = k + j
+                        if f in preds:
+                            window[:, j, 0] = preds[f]
+                    logits = model(window)
+                    pb = (torch.sigmoid(logits[:, -1, 0].float()) >= thr).float()
+                    if no_healing:
+                        prev = acc if acc is not None else batch[:, T - 1, 0]
+                        pb = torch.maximum(prev, pb)
+                    acc, preds[k + T] = pb, pb
+            tgt = batch[:, val_rollout_steps + T - 1, 0]
+            # Route the per-threshold counts through the shared seam (D-11) so the
+            # calibration F1 is the SAME implementation used at eval time (CMP-04).
+            # prob is unused here (only tp/fp/fn feed F1), so the binarized mask is
+            # passed in its place.
+            acc_np = acc.detach().cpu().numpy()
+            tgt_np = tgt.detach().cpu().numpy()
+            m = per_frame_metrics(tgt_np, acc_np, acc_np)
+            s = stats[float(thr)]
+            s[0] += m["tp"]
+            s[1] += m["fp"]
+            s[2] += m["fn"]
+
+    table, best_thr, best_f1 = [], 0.5, -1.0
+    for thr in thresholds:
+        tp, fp, fn = stats[float(thr)]
+        prec = tp / (tp + fp) if tp + fp > 0 else 0.0
+        rec = tp / (tp + fn) if tp + fn > 0 else 0.0
+        f1 = 2 * prec * rec / (prec + rec) if prec + rec > 0 else 0.0
+        table.append({"threshold": float(thr), "precision": prec,
+                      "recall": rec, "f1": f1})
+        if f1 > best_f1:
+            best_f1, best_thr = f1, float(thr)
+    return best_thr, best_f1, table
 
 
 # ----------------------------------------------------------------------
@@ -144,18 +247,38 @@ def main(cfg: Config) -> None:
                            val_fraction=cfg.val_fraction)
     print(f"[train] windows: stage1={len(ds_tr_s1)} stage2={len(ds_tr_s2)} val={len(ds_val)}")
 
-    def loader(ds, shuffle):
-        return DataLoader(ds, batch_size=cfg.batch_size, shuffle=shuffle,
+    def loader(ds, shuffle, balance=False):
+        sampler = None
+        if balance:
+            # inverse-frequency sampling: each velocity group is drawn equally
+            # often, otherwise fast runs (dense fracture) dominate the epochs
+            v = ds.window_velocities()
+            _, inv, counts = np.unique(v, return_inverse=True, return_counts=True)
+            weights = torch.as_tensor(1.0 / counts[inv], dtype=torch.double)
+            sampler = torch.utils.data.WeightedRandomSampler(
+                weights, num_samples=len(ds), replacement=True)
+        train_like = shuffle or sampler is not None
+        return DataLoader(ds, batch_size=cfg.batch_size,
+                          shuffle=shuffle and sampler is None, sampler=sampler,
                           num_workers=cfg.num_workers, pin_memory=(device.type == "cuda"),
-                          drop_last=shuffle, persistent_workers=cfg.num_workers > 0)
+                          drop_last=train_like, persistent_workers=cfg.num_workers > 0)
 
-    dl_s1, dl_s2, dl_val = loader(ds_tr_s1, True), loader(ds_tr_s2, True), loader(ds_val, False)
+    dl_s1 = loader(ds_tr_s1, True, cfg.balance_velocity)
+    dl_s2 = loader(ds_tr_s2, True, cfg.balance_velocity)
+    dl_val = loader(ds_val, False)
 
     # ---- model / optim ----
     model = build_model(cfg, assembler.n_channels).to(device)
     print(f"[train] FractureTAU parameters: {count_parameters(model)/1e6:.2f}M")
     criterion = SegLoss(bce_weight=cfg.bce_weight, dice_weight=cfg.dice_weight,
-                        focal_weight=cfg.focal_weight, pos_weight=cfg.pos_weight).to(device)
+                        focal_weight=cfg.focal_weight, pos_weight=cfg.pos_weight,
+                        growth_weight=cfg.growth_weight,
+                        tversky_weight=cfg.tversky_weight,
+                        tversky_alpha=cfg.tversky_alpha,
+                        tversky_beta=cfg.tversky_beta,
+                        tversky_gamma=cfg.tversky_gamma).to(device)
+    no_healing = (cfg.enforce_no_healing if cfg.rollout_no_healing < 0
+                  else bool(cfg.rollout_no_healing))
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr,
                                   weight_decay=cfg.weight_decay)
     ema = EMA(model, cfg.ema_decay)
@@ -201,6 +324,13 @@ def main(cfg: Config) -> None:
         stage = 1 if epoch < cfg.epochs_stage1 else 2
         dl = dl_s1 if stage == 1 else dl_s2
         n_steps = 1 if stage == 1 else cfg.rollout_steps
+        # scheduled sampling: anneal ss_start -> ss_end across stage 2 so the
+        # model eases from near-teacher-forcing into the fully-AR eval regime.
+        if stage == 2 and cfg.epochs_stage2 > 1:
+            frac = (epoch - cfg.epochs_stage1) / (cfg.epochs_stage2 - 1)
+            ss_prob = cfg.ss_start + (cfg.ss_end - cfg.ss_start) * frac
+        else:
+            ss_prob = cfg.ss_end
 
         model.train()
         t0 = time.time()
@@ -219,7 +349,8 @@ def main(cfg: Config) -> None:
 
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device.type, dtype=dtype, enabled=dtype is not None):
-                loss, _, _ = rollout_losses(model, batch, T, n_steps, criterion)
+                loss, _, _ = rollout_losses(model, batch, T, n_steps, criterion,
+                                            ss_prob=ss_prob, no_healing=no_healing)
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -237,7 +368,10 @@ def main(cfg: Config) -> None:
         backup = {k: v.detach().clone() for k, v in model.state_dict().items()}
         ema.copy_to(model)
         val_loss, f1_tf, f1_ar = validate(model, dl_val, T, criterion, device,
-                                          dtype, cfg.val_rollout_steps)
+                                          dtype, cfg.val_rollout_steps,
+                                          macro_velocity=cfg.val_macro_velocity,
+                                          vel_channel=assembler.n_channels - 3,
+                                          no_healing=no_healing)
         if f1_ar > best_val_f1_ar:
             best_val_f1_ar = f1_ar
             save_checkpoint(run_dir / "checkpoints" / "best.pt", model=model, ema=ema,
@@ -262,6 +396,27 @@ def main(cfg: Config) -> None:
                          run_dir / "curves" / "training_curves.png")
     print(f"[train] done. best val AR-F1 = {best_val_f1_ar:.4f}")
     print(f"[train] best checkpoint: {run_dir / 'checkpoints' / 'best.pt'}")
+
+    # ---- threshold calibration on the best (EMA) checkpoint ----
+    if cfg.calibrate_threshold:
+        best_path = run_dir / "checkpoints" / "best.pt"
+        if best_path.exists():
+            state = torch.load(best_path, map_location=device, weights_only=False)
+            model.load_state_dict(state["model"])  # best.pt stores EMA weights
+        else:
+            ema.copy_to(model)
+        grid = np.linspace(cfg.thr_min, cfg.thr_max, cfg.thr_steps).tolist()
+        thr, f1, table = calibrate_threshold(
+            model, dl_val, T, device, dtype, cfg.val_rollout_steps, grid,
+            no_healing=no_healing)
+        calib = {"threshold": thr, "val_f1_ar": f1,
+                 "default_f1_at_0.5": next((r["f1"] for r in table
+                                            if abs(r["threshold"] - 0.5) < 1e-6), None),
+                 "grid": table}
+        with open(run_dir / "calibration.json", "w") as f:
+            json.dump(calib, f, indent=2)
+        print(f"[train] calibrated threshold = {thr:.3f} (val AR-F1 {f1:.4f}); "
+              f"wrote {run_dir / 'calibration.json'}")
 
 
 if __name__ == "__main__":
