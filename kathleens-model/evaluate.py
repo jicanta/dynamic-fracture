@@ -60,70 +60,49 @@ from source.calibrate import calibrate  # noqa: E402
 
 
 def _collect_train_val_probs(model, train_ds_img, *, val_fraction, gt_threshold,
-                             fracture_channel_idx, enforce_no_healing):
+                             fracture_channel_idx, enforce_no_healing=True):
     """Run the FROZEN model over the TRAINING data and return (val_probs, val_gt_bin)
     for the clean frame-boundary val tail (CMP-04 / D-07).
 
     The val frames are the temporal tail of the TRAINING path -- NOT the 16
-    held-out test cases. The per-run boundary is the SAME formula as Plan 01-04:
+    held-out test cases. The boundary is the SAME formula as Plan 01-04:
         f_cut = int(round(n_frames * (1.0 - 0.1)))     # val_fraction=0.1 (config.py:55)
     computed on the post-frame-0-drop frame count (drop_first_csv=True is applied
     upstream in build_datasets, so the frame indices here are already post-drop).
-    A single continuous-AR rollout (mirroring predict_full_simulation_metrics)
-    collects (raw prob, GT binary) per predicted frame; frames at/after f_cut are
-    the calibration set. Inference only -- the frozen .keras is never written.
 
-    NOTE (autonomous:false): this executes on Gilbreth (TF GPU + frozen .keras);
-    the per-run boundary alignment with the new pipeline is confirmed on cluster.
+    Probabilities are collected TEACHER-FORCED (one prediction per dataset window
+    from the true input frames), not via cross-batch AR feedback -- the training
+    dataset has variable batch sizes, so injecting a previous batch's prediction
+    into the next batch's window is ill-defined. For THRESHOLD calibration this is
+    the right basis: the val FRAMES and the objective/grid match the new side; the
+    prob-production protocol (teacher-forced vs AR) is the one documented
+    difference (``enforce_no_healing`` is accepted for signature compatibility but
+    unused in teacher-forced collection). Inference only -- frozen .keras untouched.
+
+    NOTE (autonomous:false): executes on Gilbreth (TF GPU + frozen .keras); the
+    chronological ordering / per-run alignment of the val tail is confirmed there.
     """
     import numpy as np
 
     model_expected_channels = psm._get_model_expected_channels(model)
-    iterator = iter(train_ds_img)
-    try:
-        X0, y0 = next(iterator)
-    except StopIteration:
-        return [], []
-
-    X_ar, frac_idx = psm._prepare_x_window(
-        X0, model_expected_channels=model_expected_channels,
-        fracture_channel_idx=fracture_channel_idx)
-    y0_np = y0.numpy().astype(np.float32)
-    B, T, H, W, Cin = X_ar.shape
-
     probs, gts = [], []
-    running_state = None
-    current_y_gt_last = y0_np[:, -1, :, :, 0]   # (B,H,W)
 
-    while True:
+    for X, y in train_ds_img:
+        X_ar, _ = psm._prepare_x_window(
+            X, model_expected_channels=model_expected_channels,
+            fracture_channel_idx=fracture_channel_idx)
         y_prob = model.predict(X_ar, verbose=0)
         if y_prob.ndim == 5:
-            pred_last_raw = y_prob[:, -1, :, :, 0]
+            pred_last_raw = y_prob[:, -1, :, :, 0]      # (B,H,W)
         elif y_prob.ndim == 4:
             pred_last_raw = y_prob[:, :, :, 0]
         else:
             raise ValueError(f"Unexpected model output shape {y_prob.shape}")
 
-        for i in range(B):
+        gt_last = y.numpy().astype(np.float32)[:, -1, :, :, 0]   # (B,H,W)
+        for i in range(pred_last_raw.shape[0]):                  # per-batch B (variable)
             probs.append(pred_last_raw[i].astype(np.float32))
-            gts.append((current_y_gt_last[i] >= gt_threshold).astype(np.uint8))
-
-        # AR feedback (channel 0 only), no-healing -- exactly the eval protocol.
-        pred_bin = (pred_last_raw >= 0.5).astype(np.float32)
-        if enforce_no_healing and running_state is not None:
-            pred_bin = np.maximum(running_state, pred_bin).astype(np.float32)
-        running_state = pred_bin.copy()
-
-        try:
-            Xn, yn = next(iterator)
-        except StopIteration:
-            break
-        X_ar, _ = psm._prepare_x_window(
-            Xn, model_expected_channels=model_expected_channels,
-            fracture_channel_idx=fracture_channel_idx)
-        X_ar = X_ar.copy()
-        X_ar[:, -1, :, :, frac_idx] = pred_bin   # feed prediction into channel 0
-        current_y_gt_last = yn.numpy().astype(np.float32)[:, -1, :, :, 0]
+            gts.append((gt_last[i] >= gt_threshold).astype(np.uint8))
 
     # Clean frame-boundary val split (Plan 01-04 / D-07): tail at/after f_cut.
     n_frames = len(probs)
