@@ -167,7 +167,13 @@ def late_rollout_macro_f1(rows: Sequence[Dict[str, float]], frac: float = 0.20) 
     rollout; macro F1 (D-01/D-03) is computed within that window. Captures
     long-horizon stability where the autoregressive rollout degrades most.
     """
-    raise NotImplementedError("Plan 02: D-04 per-case last-20% macro F1")
+    rows = list(rows)
+    n = len(rows)
+    if n == 0:
+        raise ValueError("late_rollout_macro_f1: no rows to aggregate")
+    k = max(1, round(frac * n))          # D-04: per-case last-frac, never 0
+    tail = rows[-k:]
+    return macro_f1_from_counts(tail)
 
 
 def late_rollout_selection_metric(val_csv_paths: Iterable[str | Path]) -> float:
@@ -178,5 +184,32 @@ def late_rollout_selection_metric(val_csv_paths: Iterable[str | Path]) -> float:
     ACROSS cases, returning a single float. Inputs are VALIDATION CSVs only --
     test-set CSVs must never reach this function (no selection-time leakage).
     This is the stable seam Phase 3/4 imports for sweep/checkpoint selection.
+
+    D-05: the late-rollout (last-20%) AR macro F1 is the PRIMARY model-selection
+    criterion exposed for Phase 3/4 (short-rollout val F1 is only a
+    guardrail/tiebreaker).
+    D-06: the inputs MUST be VALIDATION-split per-case CSVs ONLY — never the 16
+    held-out test cases. Passing test-set CSVs here is selection-time leakage and
+    is the caller's contract to avoid; this function makes no test-set access.
     """
-    raise NotImplementedError("Plan 02: D-05/D-06 val-only selection metric")
+    paths = list(val_csv_paths)
+    if not paths:
+        raise ValueError("late_rollout_selection_metric: empty val_csv_paths "
+                         "(no validation per_frame_metrics.csv provided)")
+    per_case = [late_rollout_macro_f1(_read_count_rows(p)) for p in paths]
+    return sum(per_case) / len(per_case)
+
+
+def selection_metric_from_eval_dir(eval_dir: str | Path) -> float:
+    """Directory convenience over :func:`late_rollout_selection_metric` (D-05/D-06).
+
+    Globs ``<case>/per_frame_metrics.csv`` under ``eval_dir`` (mirror
+    ``micro_metrics.collect``) and feeds the discovered paths to the val-only
+    selection metric. The SAME D-06 contract applies: ``eval_dir`` must contain
+    ONLY validation-split cases, never the held-out test cases. Fails loud (mirror
+    ``micro_metrics.main:52-53``) when no per-case CSV is found.
+    """
+    paths = sorted(glob.glob(os.path.join(str(eval_dir), "*", "per_frame_metrics.csv")))
+    if not paths:
+        raise ValueError(f"no <case>/per_frame_metrics.csv found under {eval_dir}")
+    return late_rollout_selection_metric(paths)
