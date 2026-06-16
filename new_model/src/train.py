@@ -38,7 +38,9 @@ from .utils import (CSVLogger, EMA, amp_dtype, cosine_warmup_lr,
 # Rollout core (shared by stage-2 training and validation)
 # ----------------------------------------------------------------------
 def rollout_losses(model, batch, T, n_steps, criterion, *, feedback_hard=True,
-                   ss_prob=1.0, no_healing=False):
+                   ss_prob=1.0, no_healing=False, ar_pushforward=False,
+                   feedback_noise_std=0.0, feedback_noise_p=0.0,
+                   head_type="sigmoid"):
     """batch: (B, L, C, H, W) with L >= T + n_steps.
 
     Step 0 is teacher-forced over the full window (dense supervision).
@@ -71,16 +73,33 @@ def rollout_losses(model, batch, T, n_steps, criterion, *, feedback_hard=True,
                 window[:, j, 0] = preds[f]
         logits = model(window)                       # (B, T, 1, H, W)
 
-        if k == 0:
-            target = batch[:, 1:T + 1, 0:1]          # masks t+1..t+T
-            new = growth_mask(target, batch[:, 0:T, 0:1])
-            losses.append(criterion(logits, target, new_mask=new))
-        else:
-            target = batch[:, k + T:k + T + 1, 0:1]  # mask of the new frame only
-            new = growth_mask(target, batch[:, k + T - 1:k + T, 0:1])
-            losses.append(criterion(logits[:, -1:], target, new_mask=new))
+        # Pushforward (Brandstetter et al.): roll forward with a DETACHED state and
+        # score the LAST step only, so the backprop graph (and memory) is O(1) in K
+        # instead of full-BPTT over all K steps. Backprop through the early unroll
+        # steps actually HURTS AR rollouts, so we skip the loss on non-final steps.
+        score_step = (not ar_pushforward) or (k == n_steps - 1)
+        if score_step:
+            if k == 0:
+                target = batch[:, 1:T + 1, 0:1]          # masks t+1..t+T
+                new = growth_mask(target, batch[:, 0:T, 0:1])
+                losses.append(criterion(logits, target, new_mask=new))
+            else:
+                target = batch[:, k + T:k + T + 1, 0:1]  # mask of the new frame only
+                new = growth_mask(target, batch[:, k + T - 1:k + T, 0:1])
+                losses.append(criterion(logits[:, -1:], target, new_mask=new))
 
-        p = torch.sigmoid(logits[:, -1, 0])          # prob of frame k+T
+        # head_type read: the monotone-delta head already returns a probability,
+        # so do NOT sigmoid a second time (Pitfall 4 / threat T-03-11).
+        p = (logits[:, -1, 0] if head_type == "monotone_delta"
+             else torch.sigmoid(logits[:, -1, 0]))    # prob of frame k+T
+        # Feedback-noise (no-healing-safe): inject BEFORE the straight-through
+        # binarization so the downstream torch.maximum (no_healing) guarantees the
+        # perturbation can only ADD damage (0->1), never heal (1->0).
+        if feedback_noise_std:
+            p = (p + feedback_noise_std * torch.randn_like(p)).clamp(0.0, 1.0)
+        if feedback_noise_p:
+            flip = (torch.rand_like(p) < feedback_noise_p).float()
+            p = torch.maximum(p, flip)                # add-only FP injection
         if feedback_hard:
             # straight-through: binary forward (matches eval), soft gradient
             p = (p > 0.5).float() + p - p.detach()
@@ -92,7 +111,9 @@ def rollout_losses(model, batch, T, n_steps, criterion, *, feedback_hard=True,
             gt = batch[:, k + T, 0]
             use_pred = (torch.rand(B, 1, 1, device=batch.device) < ss_prob).to(p.dtype)
             p = use_pred * p + (1.0 - use_pred) * gt
-        preds[k + T] = p
+        # Pushforward: detach the fed-back state so the next step's window carries
+        # no gradient history (the graph rebuilds only for the final scored step).
+        preds[k + T] = p.detach() if ar_pushforward else p
 
     last_target = batch[:, n_steps + T - 1, 0]
     return torch.stack(losses).mean(), preds[n_steps + T - 1], last_target
@@ -101,7 +122,8 @@ def rollout_losses(model, batch, T, n_steps, criterion, *, feedback_hard=True,
 # ----------------------------------------------------------------------
 @torch.no_grad()
 def validate(model, loader, T, criterion, device, dtype, val_rollout_steps,
-             *, macro_velocity=False, vel_channel=None, no_healing=False):
+             *, macro_velocity=False, vel_channel=None, no_healing=False,
+             head_type="sigmoid"):
     """If macro_velocity, F1 is averaged per velocity group first so slow runs
     (few windows, sparse fracture) weigh as much as fast ones in selection."""
     model.eval()
@@ -116,12 +138,17 @@ def validate(model, loader, T, criterion, device, dtype, val_rollout_steps,
             new = growth_mask(target, batch[:, 0:T, 0:1])
             tot_loss += criterion(logits, target, new_mask=new).item() * batch.shape[0]
             n += batch.shape[0]
-            pred_bin = (torch.sigmoid(logits[:, -1, 0]) > 0.5).float()
+            p_tf = (logits[:, -1, 0] if head_type == "monotone_delta"
+                    else torch.sigmoid(logits[:, -1, 0]))
+            pred_bin = (p_tf > 0.5).float()
 
-            # short AR rollout F1 (model-selection metric: matches the eval protocol)
+            # short AR rollout F1 (model-selection metric: matches the eval protocol).
+            # Clean rollout: no feedback-noise / no pushforward (selection must stay
+            # reproducible and never teacher-forced -- threat T-03-12); only the
+            # head_type read is threaded so the monotone head is not double-sigmoided.
             _, last_pred, last_tgt = rollout_losses(
                 model, batch, T, val_rollout_steps, criterion,
-                feedback_hard=True, no_healing=no_healing)
+                feedback_hard=True, no_healing=no_healing, head_type=head_type)
             ar_bin = (last_pred > 0.5).float()
         for i in range(batch.shape[0]):
             vel = (round(batch[i, 0, vel_channel, 0, 0].item(), 6)
@@ -349,8 +376,13 @@ def main(cfg: Config) -> None:
 
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device.type, dtype=dtype, enabled=dtype is not None):
-                loss, _, _ = rollout_losses(model, batch, T, n_steps, criterion,
-                                            ss_prob=ss_prob, no_healing=no_healing)
+                loss, _, _ = rollout_losses(
+                    model, batch, T, n_steps, criterion,
+                    ss_prob=ss_prob, no_healing=no_healing,
+                    ar_pushforward=bool(cfg.ar_pushforward),
+                    feedback_noise_std=cfg.feedback_noise_std,
+                    feedback_noise_p=cfg.feedback_noise_p,
+                    head_type=cfg.head_type)
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -371,7 +403,8 @@ def main(cfg: Config) -> None:
                                           dtype, cfg.val_rollout_steps,
                                           macro_velocity=cfg.val_macro_velocity,
                                           vel_channel=assembler.n_channels - 3,
-                                          no_healing=no_healing)
+                                          no_healing=no_healing,
+                                          head_type=cfg.head_type)
         if f1_ar > best_val_f1_ar:
             best_val_f1_ar = f1_ar
             save_checkpoint(run_dir / "checkpoints" / "best.pt", model=model, ema=ema,
