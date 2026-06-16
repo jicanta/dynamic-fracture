@@ -77,22 +77,22 @@ Every canonical case x mode cell is reported explicitly; cells with no evaluatio
 
 | Case | BASE | SED | VON | PRESSURE |
 |---|---|---|---|---|
-| test_MS206_V100 | new only (0.0000) | 0.0000 | new only (0.0000) | new only (0.0000) |
-| test_MS206_V200 | new only (0.0000) | 0.0000 | new only (0.0000) | new only (0.0000) |
-| test_MS206_V400 | new only (0.7306) | 0.7306 | new only (0.7306) | new only (0.7306) |
-| test_MS206_V1000 | new only (0.8033) | new only (0.8033) | new only (0.8033) | new only (0.8033) |
-| test_MS210_V400 | new only (0.4650) | new only (0.4650) | new only (0.4650) | new only (0.4650) |
-| test_PBX1_V400_true | new only (0.3299) | new only (0.3299) | new only (0.3299) | new only (0.3299) |
-| test_PBX_2_V400 | new only (0.1904) | new only (0.1904) | new only (0.1904) | new only (0.1904) |
-| test_MS5_V150ms_inc | new only (0.0000) | new only (0.0000) | new only (0.0000) | new only (0.0000) |
-| test_MS5_V400ms | new only (0.7984) | new only (0.7984) | 0.7984 | 0.7984 |
-| test_emergency_horizontal | new only (0.4638) | new only (0.4638) | new only (0.4638) | new only (0.4638) |
-| test_horizontal_layers_3 | new only (0.7059) | new only (0.7059) | new only (0.7059) | new only (0.7059) |
-| test_horizontal_layers_4 | new only (0.4684) | new only (0.4684) | new only (0.4684) | new only (0.4684) |
-| test_inclusions_1_2 | new only (0.6934) | new only (0.6934) | new only (0.6934) | new only (0.6934) |
-| test_inclusions_2_2 | new only (0.7414) | new only (0.7414) | new only (0.7414) | new only (0.7414) |
-| test_inclusions_3_2 | new only (0.6464) | new only (0.6464) | new only (0.6464) | new only (0.6464) |
-| test_inclusions_true_V400 | new only (0.8049) | new only (0.8049) | new only (0.8049) | new only (0.8049) |
+| test_MS206_V100 | new only (0.0000) | baseline only (0.0000) | not yet evaluated | not yet evaluated |
+| test_MS206_V200 | new only (0.0000) | baseline only (0.5205) | not yet evaluated | not yet evaluated |
+| test_MS206_V400 | new only (0.7306) | baseline only (0.6907) | not yet evaluated | not yet evaluated |
+| test_MS206_V1000 | new only (0.8033) | not yet evaluated | not yet evaluated | not yet evaluated |
+| test_MS210_V400 | new only (0.4650) | not yet evaluated | not yet evaluated | not yet evaluated |
+| test_PBX1_V400_true | new only (0.3299) | not yet evaluated | not yet evaluated | not yet evaluated |
+| test_PBX_2_V400 | new only (0.1904) | not yet evaluated | not yet evaluated | not yet evaluated |
+| test_MS5_V150ms_inc | new only (0.0000) | not yet evaluated | not yet evaluated | not yet evaluated |
+| test_MS5_V400ms | new only (0.7984) | not yet evaluated | baseline only (0.6201) | baseline only (0.8947) |
+| test_emergency_horizontal | new only (0.4638) | not yet evaluated | not yet evaluated | not yet evaluated |
+| test_horizontal_layers_3 | new only (0.7059) | not yet evaluated | not yet evaluated | not yet evaluated |
+| test_horizontal_layers_4 | new only (0.4684) | not yet evaluated | not yet evaluated | not yet evaluated |
+| test_inclusions_1_2 | new only (0.6934) | not yet evaluated | not yet evaluated | not yet evaluated |
+| test_inclusions_2_2 | new only (0.7414) | not yet evaluated | not yet evaluated | not yet evaluated |
+| test_inclusions_3_2 | new only (0.6464) | not yet evaluated | not yet evaluated | not yet evaluated |
+| test_inclusions_true_V400 | new only (0.8049) | not yet evaluated | not yet evaluated | not yet evaluated |
 
 ## Threshold sensitivity
 

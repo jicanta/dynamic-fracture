@@ -45,3 +45,18 @@ def test_honest_matrix():
     md2 = render_matrix_md(rows2)
     # the evaluated value surfaces; the present cell is not the absent label
     assert "0.5" in md2
+
+    # CR-01 regression guard (METR-04 honesty): a BASE-only run must NOT fabricate
+    # its F1 into the SED/VON/PRESSURE columns. With new_mode="BASE" (default) and
+    # no baseline in the non-BASE modes, every non-BASE cell for the evaluated case
+    # must read NOT_EVALUATED -- never the BASE F1.
+    cell = {(r["case"], r["mode"]): r["status"] for r in rows2}
+    assert "0.5" in cell[(one, "BASE")]
+    for m in MODES:
+        if m == "BASE":
+            continue
+        assert cell[(one, m)] == NOT_EVALUATED, (
+            f"mode {m} fabricated the BASE F1: {cell[(one, m)]!r}"
+        )
+    # exactly one cell for this case carries the new-model F1
+    assert sum("0.5" in cell[(one, m)] for m in MODES) == 1

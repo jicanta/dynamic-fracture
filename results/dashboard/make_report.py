@@ -180,11 +180,15 @@ def _stability_section(cases: List[str], eval_dir: Path, fig_dir: Path) -> List[
 
 
 # ---- section 3: coverage matrix (16x4) ----
-def _matrix_section(eval_dir: Path, old_root: Path) -> List[str]:
-    """Honest 16x4 case x mode coverage grid (D-09/METR-04)."""
+def _matrix_section(eval_dir: Path, old_root: Path, new_mode: str = "BASE") -> List[str]:
+    """Honest 16x4 case x mode coverage grid (D-09/METR-04).
+
+    ``new_mode`` is the single mode the FractureTAU run was evaluated in; the
+    new-model F1 only populates that column (CR-01 fix: no cross-mode fabrication).
+    """
     new = collect(str(eval_dir))
     old = collect_old() if old_root == _abs(OLD_ROOT) else _collect_old_under(old_root)
-    matrix_rows = build_matrix(new, old)
+    matrix_rows = build_matrix(new, old, new_mode=new_mode)
     return [
         "## Coverage matrix (16x4)",
         "",
@@ -398,7 +402,7 @@ def build_report(
     # LOCKED D-14 section order.
     lines += _headline_section(cases, eval_dir, old_root, ref_mode)
     lines += _stability_section(cases, eval_dir, fig_dir)
-    lines += _matrix_section(eval_dir, old_root)
+    lines += _matrix_section(eval_dir, old_root, new_mode=ref_mode)
     lines += _threshold_section(probs_list, gt_list, have, run_dir, fig_dir)
     lines += _panels_section(
         probs_list, gt_list, have, macro_by_case, run_dir, fig_dir, diag_dir

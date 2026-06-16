@@ -47,7 +47,11 @@ NOT_EVALUATED: str = "not yet evaluated"
 
 
 # ---- matrix build (D-09) ----
-def build_matrix(new: Dict[str, dict], old: Dict[Tuple[str, str], dict]) -> List[dict]:
+def build_matrix(
+    new: Dict[str, dict],
+    old: Dict[Tuple[str, str], dict],
+    new_mode: str = "BASE",
+) -> List[dict]:
     """Honest per-(case, mode) status matrix over all 16 canonical cases (D-09).
 
     Extends ``compare_runs.build_coverage(new, old)``: in addition to the
@@ -57,20 +61,29 @@ def build_matrix(new: Dict[str, dict], old: Dict[Tuple[str, str], dict]) -> List
     is ``{(mode, case): metrics}``. Returns one dict per (case, mode) -- 16 * 4
     rows, in the same order build_coverage emits them.
 
-    Status derivation (D-09 honest cell):
-      * baseline + new present -> evaluated head-to-head: the new-model F1.
-      * new present, baseline absent -> ``"new only (<F1>)"``.
-      * baseline present, new absent -> ``"baseline only (<F1>)"``.
+    ``build_coverage`` sets ``new_present`` *mode-agnostically* (the new-run
+    metrics dict is keyed by case only). A single FractureTAU run is evaluated in
+    exactly ONE mode (``new_mode``, e.g. BASE), so the new-model F1 must only
+    populate that mode's column -- otherwise the BASE F1 is fabricated into the
+    SED/VON/PRESSURE columns as if a head-to-head had been run there (CR-01 /
+    METR-04 honesty bug). Every other mode column is therefore reported honestly
+    (baseline-only or :data:`NOT_EVALUATED`).
+
+    Status derivation (D-09 honest cell), gated on ``mode == new_mode``:
+      * baseline + new present (in new_mode) -> evaluated head-to-head: new F1.
+      * new present (in new_mode), baseline absent -> ``"new only (<F1>)"``.
+      * baseline present, new absent here -> ``"baseline only (<F1>)"``.
       * neither -> :data:`NOT_EVALUATED`.
     """
     rows: List[dict] = []
     for r in build_coverage(new, old):
         case, mode = r["case"], r["mode"]
         baseline = r["baseline_present"] == "yes"
-        new_present = r["new_present"] == "yes"
-        if baseline and new_present:
+        # Mode-scope the new-model presence: the run was only evaluated in new_mode.
+        new_here = r["new_present"] == "yes" and mode == new_mode
+        if baseline and new_here:
             status = f"{new[case]['f1']:.4f}"
-        elif new_present:
+        elif new_here:
             status = f"new only ({new[case]['f1']:.4f})"
         elif baseline:
             status = f"baseline only ({old[(mode, case)]['f1']:.4f})"
