@@ -26,9 +26,10 @@ Run:  cd dynamic-fracture && python -m pytest tests/ -q
 
 from __future__ import annotations
 
+import csv
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Sequence, Tuple
 
 import numpy as np
 import pytest
@@ -132,3 +133,95 @@ def golden_degenerate() -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     pred_bin = np.zeros((SYNTH_H, SYNTH_W), dtype=np.uint8)
     prob = np.zeros((SYNTH_H, SYNTH_W), dtype=np.float64)
     return gt_bin, pred_bin, prob
+
+
+# ---- multi-frame per-case CSV builder (aggregation fixtures) ----
+# Canonical per-frame schema, canonical-first order. Matches what
+# new_model/src/evaluate.py:110-118 emits: the canonical D-13 columns
+# (frame_idx,precision,recall,f1,iou,bce) followed by the count + accuracy
+# provenance columns the micro/aggregation layers read.
+PER_FRAME_COLUMNS: List[str] = [
+    "frame_idx", "precision", "recall", "f1", "iou", "bce",
+    "tp", "tn", "fp", "fn", "accuracy",
+]
+
+
+def _frozen_seam_row(tp: float, fp: float, fn: float, tn: float) -> Dict[str, float]:
+    """Per-frame metrics with the FROZEN seam convention (0/0 -> 0.0).
+
+    Identical arithmetic to ``frac_metrics.per_frame_metrics`` (lines 82-86):
+    the all-zero frame yields ``precision = recall = f1 = iou = 0.0``. This is
+    intentionally the OPPOSITE of the D-03 aggregation convention (0/0 -> 1.0)
+    so the stored ``f1`` column DIFFERS from the macro-F1 Plan 02 recomputes
+    from the counts — that divergence is exactly what the Plan-02 tests pin.
+    """
+    prec = tp / (tp + fp) if tp + fp > 0 else 0.0
+    rec = tp / (tp + fn) if tp + fn > 0 else 0.0
+    f1 = 2 * prec * rec / (prec + rec) if prec + rec > 0 else 0.0
+    iou = tp / (tp + fp + fn) if tp + fp + fn > 0 else 0.0
+    denom = tp + tn + fp + fn
+    acc = (tp + tn) / denom if denom > 0 else 0.0
+    return {"precision": prec, "recall": rec, "f1": f1, "iou": iou, "accuracy": acc}
+
+
+@pytest.fixture
+def per_frame_csv(tmp_path_factory) -> Callable[..., Path]:
+    """FACTORY fixture: build a ``per_frame_metrics.csv`` from frame counts.
+
+    Returns a callable ``build(counts, *, name="case")`` where ``counts`` is a
+    sequence of per-frame ``(tp, fp, fn, tn)`` tuples. It writes one CSV row per
+    frame into a fresh tmp ``<name>/per_frame_metrics.csv`` (mirroring the real
+    per-case layout consumed by ``micro_metrics.collect``) and returns its Path.
+
+    Columns are the canonical-first schema ``PER_FRAME_COLUMNS`` matching
+    ``evaluate.py:110-118``. precision/recall/f1/iou are computed with the
+    FROZEN seam convention (``0/0 -> 0.0``); ``bce`` is a ``0.0`` placeholder.
+    Deterministic / no RNG (the underlying data is caller-supplied); any future
+    randomness must be seeded with ``np.random.default_rng(SEED)`` (SEED=42).
+    """
+    def build(counts: Sequence[Tuple[float, float, float, float]], *, name: str = "case") -> Path:
+        case_dir = tmp_path_factory.mktemp(name)
+        path = case_dir / "per_frame_metrics.csv"
+        with open(path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=PER_FRAME_COLUMNS)
+            w.writeheader()
+            for frame_idx, (tp, fp, fn, tn) in enumerate(counts):
+                m = _frozen_seam_row(float(tp), float(fp), float(fn), float(tn))
+                w.writerow({
+                    "frame_idx": frame_idx,
+                    "precision": m["precision"], "recall": m["recall"],
+                    "f1": m["f1"], "iou": m["iou"], "bce": 0.0,
+                    "tp": int(tp), "tn": int(tn), "fp": int(fp), "fn": int(fn),
+                    "accuracy": m["accuracy"],
+                })
+        return path
+    return build
+
+
+@pytest.fixture
+def multi_frame_case(per_frame_csv) -> Path:
+    """A default multi-frame case CSV: a growing crack of N=10 frames.
+
+    Includes at least one all-zero frame (empty GT + empty pred -> the 0/0 seam
+    case, frame 0) and one fully-overlapping frame (pred == GT, no fp/fn -> the
+    last frame). Foreground area grows monotonically (no-healing crack), with
+    the prediction lagging slightly so fp/fn are nonzero on the interior frames.
+    Returns the written ``per_frame_metrics.csv`` Path.
+    """
+    total = SYNTH_H * SYNTH_W           # pixels per frame (561)
+    n = 10
+    counts: List[Tuple[int, int, int, int]] = []
+    for t in range(n):
+        if t == 0:                      # all-zero frame: empty GT + empty pred
+            tp, fp, fn = 0, 0, 0
+        elif t == n - 1:                # fully-overlapping frame: pred == GT
+            gt = int(round(total * 0.5))
+            tp, fp, fn = gt, 0, 0
+        else:                           # interior: growing GT, lagging pred
+            gt = int(round(total * (t / n) * 0.5))
+            tp = int(round(gt * 0.85))
+            fn = gt - tp
+            fp = max(1, int(round(gt * 0.1)))
+        tn = total - tp - fp - fn
+        counts.append((tp, fp, fn, tn))
+    return per_frame_csv(counts, name="multi_frame_case")
