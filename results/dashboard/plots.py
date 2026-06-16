@@ -239,16 +239,92 @@ def fpfn_rgb(gt: np.ndarray, pred: np.ndarray) -> np.ndarray:
     Returns an ``(H, W, 3)`` uint8 image: gray ``COLOR_TP`` where ``gt & pred``,
     red ``COLOR_FP`` where ``pred & ~gt``, blue ``COLOR_FN`` where ``gt & ~pred``,
     black ``COLOR_BG`` elsewhere. Both inputs MUST already be in the same
-    orientation (Pitfall 2).
+    orientation (Pitfall 2): the caller passes GT from probs_io and the pred
+    binarized from the SAME saved probs -- never a flipud'd PNG against an
+    unflipped GT array.
     """
-    raise NotImplementedError("Plan 05: D-10 FP/FN RGB overlay")
+    gt = (np.asarray(gt) >= 1)
+    pred = (np.asarray(pred) >= 1)
+    H, W = gt.shape
+    rgb = np.zeros((H, W, 3), np.uint8)            # black background (COLOR_BG)
+    tp = gt & pred                                 # gt==1 & pred==1
+    fp = pred & ~gt                                # pred==1 & gt==0
+    fn = gt & ~pred                                # gt==1 & pred==0
+    rgb[tp] = COLOR_TP                             # (160,160,160) gray
+    rgb[fp] = COLOR_FP                             # (220,40,40) red
+    rgb[fn] = COLOR_FN                             # (40,90,220) blue
+    return rgb
 
 
 def select_key_frames(gt_stack: np.ndarray, pred_stack: np.ndarray) -> Dict[str, int]:
     """Pick curated diagnostic frame indices from a rollout (D-10).
 
-    Returns ``{"onset", "mid", "late", "max_div"}`` -> frame indices: crack
-    onset, mid-rollout, late-rollout, and the frame of maximum GT/pred
-    divergence. Feeds the curated FP/FN panels in the report (D-14).
+    Returns ``{"onset", "mid", "late", "max_div"}`` -> frame indices:
+      * ``onset``   -- first frame with any GT foreground.
+      * ``mid``     -- ``n // 2`` (mid-rollout).
+      * ``late``    -- start of the last-20% window: ``n - max(1, round(0.20*n))``.
+      * ``max_div`` -- argmax over frames of the (FP + FN) pixel count
+                       (max pred-vs-GT divergence).
+    Feeds the curated FP/FN panels in the report (D-14).
     """
-    raise NotImplementedError("Plan 05: D-10 key-frame selection")
+    gt_stack = (np.asarray(gt_stack) >= 1).astype(np.uint8)
+    pred_stack = (np.asarray(pred_stack) >= 1).astype(np.uint8)
+    n = int(gt_stack.shape[0])
+    if n == 0:
+        raise ValueError("select_key_frames: empty stack")
+
+    # onset: first frame with any GT foreground (default to 0 if never).
+    fg_per_frame = gt_stack.reshape(n, -1).sum(axis=1)
+    nz = np.nonzero(fg_per_frame)[0]
+    onset = int(nz[0]) if nz.size else 0
+
+    mid = n // 2
+    late = n - max(1, round(0.20 * n))
+
+    # max_div: frame of maximum (FP + FN) pixel count.
+    fp = ((pred_stack == 1) & (gt_stack == 0)).reshape(n, -1).sum(axis=1)
+    fn = ((gt_stack == 1) & (pred_stack == 0)).reshape(n, -1).sum(axis=1)
+    max_div = int(np.argmax(fp + fn))
+
+    return {"onset": onset, "mid": int(mid), "late": int(late), "max_div": max_div}
+
+
+def save_fpfn_panel(
+    out_png: str | Path,
+    gt_stack: np.ndarray,
+    pred_stack: np.ndarray,
+    frames: Sequence[int],
+    *,
+    titles: Optional[Sequence[str]] = None,
+) -> None:
+    """Multi-frame FP/FN diagnostic panel on a dark figure (D-10/D-14).
+
+    Renders :func:`fpfn_rgb` for each requested frame side-by-side (Agg idiom
+    from ``utils.py``: ``mkdir(parents=True)``, ``dpi=200``, ``plt.close``). The
+    all-16 per-case panels go under ``results/diagnostics/``; the curated subset
+    is embedded by the report. GT and pred MUST share one orientation (Pitfall 2).
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    out_png = Path(out_png)
+    gt_stack = np.asarray(gt_stack)
+    pred_stack = np.asarray(pred_stack)
+    frames = list(frames)
+    n = max(1, len(frames))
+
+    fig, axes = plt.subplots(1, n, figsize=(4 * n, 4), facecolor="black")
+    if n == 1:
+        axes = [axes]
+    for i, f in enumerate(frames):
+        ax = axes[i]
+        ax.imshow(fpfn_rgb(gt_stack[f], pred_stack[f]), interpolation="nearest")
+        title = titles[i] if titles is not None and i < len(titles) else f"frame {f}"
+        ax.set_title(title, color="white", fontsize=12)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    fig.tight_layout()
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=200, facecolor="black")
+    plt.close(fig)
