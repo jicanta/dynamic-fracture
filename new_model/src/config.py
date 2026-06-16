@@ -24,6 +24,7 @@ if str(REPO_ROOT) not in sys.path:
 from case_registry import TEST_CASE_FOLDERS  # noqa: E402  (re-export; keys used in OUTPUTS/)
 
 EXTRA_CHOICES = ("none", "pressure", "vonmises", "SED")
+HEAD_TYPE_CHOICES = ("sigmoid", "monotone_delta")
 
 
 @dataclass
@@ -52,6 +53,7 @@ class Config:
     n_spatial: int = 4                     # encoder/decoder conv blocks (2 downsamples)
     n_temporal: int = 6                    # TAU blocks in the translator
     drop_path: float = 0.05
+    head_type: str = "sigmoid"             # 'sigmoid' (logits) | 'monotone_delta' (probabilistic-OR prob)
 
     # ---- loss ----
     bce_weight: float = 1.0
@@ -66,6 +68,8 @@ class Config:
     tversky_alpha: float = 0.3             # false-positive weight
     tversky_beta: float = 0.7             # false-negative weight (recall knob)
     tversky_gamma: float = 1.0             # focal exponent (1.0 = plain Tversky)
+    boundary_weight: float = 0.0           # Kervadec/morphological-band boundary loss weight (0 = off)
+    boundary_ramp: bool = True             # ramp boundary_scale 0->1 across stage 1, then hold at 1.0
 
     # ---- optimization ----
     epochs_stage1: int = 60                # teacher-forced
@@ -81,6 +85,9 @@ class Config:
     # so the fed-back mask matches eval's no-healing state. Defaults to
     # enforce_no_healing when left at -1.
     rollout_no_healing: int = -1           # -1 = follow enforce_no_healing; 0/1 = override
+    ar_pushforward: int = 0                # 1 = detach fed-back state + backprop last unroll step only
+    feedback_noise_std: float = 0.0        # soft-prob Gaussian noise on fed-back mask (no-healing-safe)
+    feedback_noise_p: float = 0.0          # Bernoulli FP-injection prob on fed-back mask (no-healing-safe)
     lr: float = 1e-3
     lr_stage2: float = 1e-4
     weight_decay: float = 1e-2
@@ -91,7 +98,8 @@ class Config:
     seed: int = 42
 
     # ---- validation / selection ----
-    val_rollout_steps: int = 5             # short AR rollout used for model selection
+    val_rollout_steps: int = 20            # AR selection-rollout length (Nyquist horizon: long
+                                           # enough to sample long-horizon drift, RESEARCH Pitfall 1)
     val_macro_velocity: bool = False       # macro-average val F1 across velocity
                                            # groups so slow runs count equally
 
@@ -159,4 +167,6 @@ def parse_config(argv=None, description: str = "SOTA dynamic fracture model") ->
     cfg = Config(**vars(args))
     if cfg.extra not in EXTRA_CHOICES:
         raise SystemExit(f"--extra must be one of {EXTRA_CHOICES}, got '{cfg.extra}'")
+    if cfg.head_type not in HEAD_TYPE_CHOICES:
+        raise SystemExit(f"--head-type must be one of {HEAD_TYPE_CHOICES}, got '{cfg.head_type}'")
     return cfg
