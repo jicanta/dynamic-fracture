@@ -43,19 +43,42 @@ GT_FNAME: str = "gt.npz"
 def save_case_probs_gt(case_dir: str | Path, probs: np.ndarray, gts: np.ndarray) -> None:
     """Persist one case's raw probability + GT stacks as fp16 npz.
 
-    Casts ``probs`` and ``gts`` to fp16 and writes ``probs.npz`` / ``gt.npz``
+    ``probs`` / ``gts`` are array-likes (e.g. python lists of per-step frames)
+    stackable to ``(n_frames, H, W)``. Probs are cast to ``float16`` (lossy,
+    A5 storage budget) and GT to ``uint8``; written to ``probs.npz`` / ``gt.npz``
     under ``case_dir`` (created if absent), mirroring the per-case file-write
     idiom (``evaluate.py`` ``df.to_csv(case_dir/"per_frame_metrics.csv")``).
-    Both arrays are shape ``(n_frames, H, W)``.
     """
-    raise NotImplementedError("Plan 03: save fp16 probs.npz + gt.npz per case")
+    case_dir = Path(case_dir)
+    case_dir.mkdir(parents=True, exist_ok=True)
+
+    probs_fp16 = np.asarray(probs).astype(np.float16)
+    gts_u8 = np.asarray(gts).astype(np.uint8)
+
+    np.savez_compressed(case_dir / PROBS_FNAME, probs=probs_fp16)
+    np.savez_compressed(case_dir / GT_FNAME, gt=gts_u8)
+    print(f"[eval] saved probs+gt fp16 for {case_dir.name}")
 
 
 def load_case_probs_gt(case_dir: str | Path) -> Tuple[np.ndarray, np.ndarray]:
     """Load one case's ``(probs, gts)`` stacks (allow_pickle=False).
 
     Reads ``probs.npz`` / ``gt.npz`` under ``case_dir`` with
-    ``np.load(..., allow_pickle=False)`` (threat T-02D-04: never unpickle).
-    Returns ``(probs, gts)`` as ``(n_frames, H, W)`` arrays.
+    ``np.load(..., allow_pickle=False)`` (threat T-02D-07: never unpickle).
+    Returns ``(probs_fp32, gt_uint8)`` as ``(n_frames, H, W)`` arrays — probs are
+    upcast to float32 for arithmetic. Raises ``FileNotFoundError`` (fail loud) if
+    either file is absent.
     """
-    raise NotImplementedError("Plan 03: load probs.npz + gt.npz (allow_pickle=False)")
+    case_dir = Path(case_dir)
+    probs_path = case_dir / PROBS_FNAME
+    gt_path = case_dir / GT_FNAME
+    if not probs_path.exists():
+        raise FileNotFoundError(f"no {PROBS_FNAME} under {case_dir}")
+    if not gt_path.exists():
+        raise FileNotFoundError(f"no {GT_FNAME} under {case_dir}")
+
+    with np.load(probs_path, allow_pickle=False) as zp:
+        probs = zp["probs"].astype(np.float32)
+    with np.load(gt_path, allow_pickle=False) as zg:
+        gts = zg["gt"].astype(np.uint8)
+    return probs, gts
