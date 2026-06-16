@@ -30,6 +30,9 @@ from dashboard.aggregate import frame_f1_d03; print(frame_f1_d03)"
 
 from __future__ import annotations
 
+import csv
+import glob
+import os
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
@@ -41,6 +44,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# ---- results/scripts sys.path shim (mirror compare_runs.py:23) ----
+# Puts micro_metrics on the path so the D-02 secondary column reuses the frozen
+# micro() implementation verbatim instead of re-deriving it here.
+SCRIPTS_DIR = REPO_ROOT / "results" / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from micro_metrics import micro  # noqa: E402  (D-02 reuse — do NOT re-implement)
+
 
 # ---- per-frame (D-03-aware) ----
 def frame_f1_d03(tp: float, fp: float, fn: float) -> float:
@@ -51,7 +62,11 @@ def frame_f1_d03(tp: float, fp: float, fn: float) -> float:
     model correctly predicted nothing), whereas the frozen seam returns ``0.0``.
     All other branches match the seam's foreground-only F1.
     """
-    raise NotImplementedError("Plan 02: D-03-aware per-frame F1 from counts")
+    if tp + fp + fn == 0:          # GT empty AND pred empty -> predicted nothing
+        return 1.0                 # D-03: F1 = 1  (frac_metrics.py:85 returns 0.0)
+    prec = tp / (tp + fp) if tp + fp > 0 else 0.0
+    rec = tp / (tp + fn) if tp + fn > 0 else 0.0
+    return 2 * prec * rec / (prec + rec) if prec + rec > 0 else 0.0
 
 
 def frame_metrics_d03(tp: float, fp: float, fn: float) -> Dict[str, float]:
@@ -61,7 +76,13 @@ def frame_metrics_d03(tp: float, fp: float, fn: float) -> Dict[str, float]:
     precision, recall, f1, iou when the frame is all-zero.
     Returns ``{"precision", "recall", "f1", "iou"}``.
     """
-    raise NotImplementedError("Plan 02: D-03-aware per-frame metric dict")
+    if tp + fp + fn == 0:          # fully degenerate frame: correctly predicted nothing
+        return {"precision": 1.0, "recall": 1.0, "f1": 1.0, "iou": 1.0}
+    prec = tp / (tp + fp) if tp + fp > 0 else 0.0
+    rec = tp / (tp + fn) if tp + fn > 0 else 0.0
+    iou = tp / (tp + fp + fn)      # tp+fp+fn > 0 guaranteed by the guard above
+    f1 = frame_f1_d03(tp, fp, fn)
+    return {"precision": prec, "recall": rec, "f1": f1, "iou": iou}
 
 
 # ---- macro aggregation (D-01) ----
@@ -73,7 +94,10 @@ def macro_f1_from_counts(rows: Iterable[Dict[str, float]]) -> float:
     intentionally NOT used -- macro F1 is recomputed from counts under the D-03
     convention.
     """
-    raise NotImplementedError("Plan 02: D-01 macro F1 = mean of frame_f1_d03")
+    f1s = [frame_f1_d03(float(r["tp"]), float(r["fp"]), float(r["fn"])) for r in rows]
+    if not f1s:
+        raise ValueError("macro_f1_from_counts: no rows to aggregate")
+    return sum(f1s) / len(f1s)
 
 
 def macro_metrics_from_csv(path: str | Path) -> Dict[str, float]:
@@ -85,7 +109,21 @@ def macro_metrics_from_csv(path: str | Path) -> Dict[str, float]:
     canonical schema's extra provenance columns are ignored
     (mirrors ``micro_metrics.py:21-34``).
     """
-    raise NotImplementedError("Plan 02: macro+micro summary from one CSV")
+    rows = _read_count_rows(path)
+    if not rows:
+        raise ValueError(f"macro_metrics_from_csv: no rows in {path}")
+    per_frame = [
+        frame_metrics_d03(float(r["tp"]), float(r["fp"]), float(r["fn"])) for r in rows
+    ]
+    n = len(per_frame)
+    return {
+        "macro_f1": sum(m["f1"] for m in per_frame) / n,
+        "precision": sum(m["precision"] for m in per_frame) / n,
+        "recall": sum(m["recall"] for m in per_frame) / n,
+        "iou": sum(m["iou"] for m in per_frame) / n,
+        "frames": n,
+        "micro_f1": micro_f1_from_csv(path),     # D-02 labelled secondary value
+    }
 
 
 def micro_f1_from_csv(path: str | Path) -> float:
@@ -94,7 +132,31 @@ def micro_f1_from_csv(path: str | Path) -> float:
     Delegates to ``micro_metrics.micro`` (reuse, do NOT re-implement micro):
     sums tp/fp/fn over every frame then computes F1 from the totals.
     """
-    raise NotImplementedError("Plan 02: D-02 micro F1 via micro_metrics.micro")
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"micro_f1_from_csv: no CSV at {p}")
+    return float(micro(str(p))["f1"])
+
+
+# ---- CSV helper (mirror micro_metrics.py:25-28) ----
+def _read_count_rows(path: str | Path) -> List[Dict[str, int]]:
+    """Read the tp/fp/fn(/tn) integer count columns from one per-frame CSV.
+
+    Keyed by header via ``csv.DictReader`` (mirror ``micro_metrics.py:25-28``) so
+    the canonical schema's extra provenance columns are ignored. Fails loud with
+    ``FileNotFoundError`` on a missing CSV (threat T-02D-05: malformed/absent CSV
+    surfaces immediately, never silently).
+    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"_read_count_rows: no CSV at {p}")
+    with open(p, newline="") as f:
+        rows = [
+            {"tp": int(r["tp"]), "fp": int(r["fp"]), "fn": int(r["fn"]),
+             "tn": int(r["tn"])}
+            for r in csv.DictReader(f)
+        ]
+    return rows
 
 
 # ---- late-rollout window (D-04) + selection seam (D-05/D-06) ----
