@@ -126,23 +126,110 @@ def case_f1_curve_from_rows(rows: Sequence[Dict[str, float]]) -> np.ndarray:
 
 # ---- threshold-sensitivity curve (D-12) ----
 def threshold_curve(
-    probs: np.ndarray,
-    gts: np.ndarray,
+    probs,
+    gts,
     out_png: str | Path,
     *,
     thr_grid: Optional[np.ndarray] = None,
     calibrated_thr: Optional[float] = None,
+    no_healing: bool = True,
 ):
     """Threshold-sensitivity sweep over saved probability stacks (D-12).
 
-    Vectorized ``probs[None] >= thr_grid[:, None]`` sweep, applying the
-    no-healing rule ``np.maximum.accumulate(pred, axis=time)`` per threshold,
-    re-using ``aggregate.frame_f1_d03`` for the per-frame F1. Marks
-    ``calibrated_thr`` (the Phase-1 value from ``calibration.json`` -- do NOT
-    re-derive calibration here). Returns ``(thr_grid, macro_f1)`` arrays and
-    writes the figure to ``out_png``.
+    ``probs`` / ``gts`` are lists of per-case ``(n_frames, H, W)`` arrays (load
+    via :func:`probs_io.load_case_probs_gt` for real data; tests pass synthetic
+    stacks). For each threshold the prediction is ``(prob >= thr)``; when
+    ``no_healing`` the per-case stack is monotonically accumulated over time via
+    ``np.maximum.accumulate(pred, axis=0)`` (state = max(state, pred)), the exact
+    rollout no-healing rule. Per-frame F1 re-uses ``aggregate.frame_f1_d03``
+    (D-03-aware), is macro-averaged within a case, then averaged across cases.
+
+    This is FractureTAU-ONLY (OQ4): the reference is pre-binarized / fixed-
+    threshold and is NEVER re-rolled here. ``calibrated_thr`` is the Phase-1 value
+    read from ``calibration.json`` (see :func:`read_calibrated_threshold`) -- do
+    NOT re-derive calibration. Returns ``(thr_grid, macro_f1)`` arrays and writes
+    the figure to ``out_png``.
     """
-    raise NotImplementedError("Plan 05: D-12 threshold-sensitivity curve")
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from dashboard.aggregate import frame_f1_d03
+
+    out_png = Path(out_png)
+    if thr_grid is None:
+        thr_grid = np.arange(0.01, 1.00, 0.01)  # fine ~0.01 grid (D-12)
+    thr_grid = np.asarray(thr_grid, dtype=float)
+
+    # Normalize to a list-of-cases (each case is a (n_frames, H, W) stack).
+    # A bare 3-D ndarray is a SINGLE case; a list/sequence is many cases.
+    def _as_cases(x):
+        if isinstance(x, np.ndarray) and x.ndim == 3:
+            return [x]
+        return list(x)
+
+    prob_cases = _as_cases(probs)
+    gt_cases = _as_cases(gts)
+    if len(prob_cases) != len(gt_cases):
+        raise ValueError("threshold_curve: probs/gts case-count mismatch")
+
+    macro_f1 = np.zeros(thr_grid.shape, dtype=float)
+    for ti, thr in enumerate(thr_grid):
+        case_scores = []
+        for prob, gt in zip(prob_cases, gt_cases):
+            prob = np.asarray(prob, dtype=np.float32)
+            gt = (np.asarray(gt) >= 1).astype(np.uint8)
+            pred = (prob >= thr).astype(np.uint8)
+            if no_healing:
+                pred = np.maximum.accumulate(pred, axis=0)  # state = max(state, pred)
+            # Per-frame D-03 F1, macro within the case.
+            frame_f1s = []
+            for f in range(pred.shape[0]):
+                p = pred[f]
+                g = gt[f]
+                tp = int(((g == 1) & (p == 1)).sum())
+                fp = int(((g == 0) & (p == 1)).sum())
+                fn = int(((g == 1) & (p == 0)).sum())
+                frame_f1s.append(frame_f1_d03(tp, fp, fn))
+            case_scores.append(float(np.mean(frame_f1s)))
+        macro_f1[ti] = float(np.mean(case_scores))
+
+    fig = plt.figure(figsize=(11, 6))
+    ax = fig.gca()
+    ax.plot(thr_grid, macro_f1, lw=2, label="FractureTAU macro F1")
+    if calibrated_thr is not None:
+        ax.axvline(
+            calibrated_thr, ls="--", color="gray",
+            label=f"Phase-1 calibrated thr = {calibrated_thr:.3f}",
+        )
+    ax.set_xlabel("threshold", fontsize=16)
+    ax.set_ylabel("macro foreground F1", fontsize=16)
+    ax.set_ylim(0.0, 1.0)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=200)
+    plt.close(fig)
+    return thr_grid, macro_f1
+
+
+def read_calibrated_threshold(run_dir: str | Path) -> Optional[float]:
+    """Read the Phase-1 calibrated threshold from ``run_dir/calibration.json``.
+
+    Returns the ``["threshold"]`` float, or ``None`` if the file is absent. Does
+    NOT recompute calibration -- the threshold curve only MARKS the Phase-1 value
+    (D-12 reuse).
+    """
+    import json
+
+    cal = Path(run_dir) / "calibration.json"
+    if not cal.exists():
+        return None
+    with open(cal) as fh:
+        data = json.load(fh)
+    thr = data.get("threshold")
+    return float(thr) if thr is not None else None
 
 
 # ---- FP/FN panel (D-10/D-14) ----
