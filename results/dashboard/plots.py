@@ -69,8 +69,59 @@ def stability_band(
     25-75 percentile ``fill_between`` band. ``label`` names the quantity on the
     y-axis (never mix BCE-from-probs with binarized F1 on one axis -- Pitfall 4).
     Writes the figure to ``out_png`` (Agg, dpi=200).
+
+    OQ3 (LOCKED): the x-axis is the NORMALIZED rollout fraction [0, 1] -- each
+    variable-length case is resampled onto a common grid via ``np.interp`` so the
+    median+IQR band is computed across cases at matched rollout fractions, never
+    absolute frame index. Returns ``(grid, med, lo, hi)`` so callers/tests can
+    assert shape without re-reading the PNG.
     """
-    raise NotImplementedError("Plan 05: D-11 median+IQR stability band")
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    out_png = Path(out_png)
+    curves = [np.asarray(c, dtype=float).ravel() for c in case_f1_curves]
+    if not curves:
+        raise ValueError("stability_band: case_f1_curves is empty")
+
+    # Resample each case onto a common normalized rollout-fraction grid (OQ3).
+    grid = np.linspace(0.0, 1.0, n_grid)
+    resampled = np.vstack(
+        [np.interp(grid, np.linspace(0.0, 1.0, len(c)), c) for c in curves]
+    )
+    # Median + IQR band across the cases (D-11): 25/50/75 percentiles, NOT mean+/-std.
+    lo, med, hi = np.percentile(resampled, [25, 50, 75], axis=0)
+
+    fig = plt.figure(figsize=(11, 6))
+    ax = fig.gca()
+    ax.plot(grid, med, lw=2, label=label)
+    ax.fill_between(grid, lo, hi, alpha=0.3, label="IQR (25-75%)")
+    ax.set_xlabel("rollout fraction", fontsize=16)
+    ax.set_ylabel("foreground F1", fontsize=16)
+    ax.set_ylim(0.0, 1.0)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=200)
+    plt.close(fig)
+    return grid, med, lo, hi
+
+
+def case_f1_curve_from_rows(rows: Sequence[Dict[str, float]]) -> np.ndarray:
+    """Per-frame D-03-aware macro-F1 curve from a case's raw count rows.
+
+    Maps each ``{tp, fp, fn, ...}`` row to :func:`aggregate.frame_f1_d03` so the
+    resulting 1-D curve is a binarized-F1-over-time series ready to hand to
+    :func:`stability_band` (never the stored ``f1`` column -- Pitfall 1).
+    """
+    from dashboard.aggregate import frame_f1_d03
+
+    return np.array(
+        [frame_f1_d03(float(r["tp"]), float(r["fp"]), float(r["fn"])) for r in rows],
+        dtype=float,
+    )
 
 
 # ---- threshold-sensitivity curve (D-12) ----
