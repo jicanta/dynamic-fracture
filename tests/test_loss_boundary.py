@@ -22,8 +22,12 @@ from pathlib import Path
 import pytest
 
 # ---- torch-availability guard (test_determinism.py:20-24) ----
+# NB: test_determinism.py injects a bare ``torch`` STUB into sys.modules when real
+# torch is absent, so a plain ``import torch`` can spuriously succeed in the full
+# suite. Probe a real submodule (the stub is not a package) to detect real torch.
 try:
     import torch as _real_torch  # noqa: F401
+    import torch.nn.functional as _F_probe  # noqa: F401 — stub lacks submodules
     TORCH_AVAILABLE = True
 except Exception:
     TORCH_AVAILABLE = False
