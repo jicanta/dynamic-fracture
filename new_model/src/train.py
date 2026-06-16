@@ -40,7 +40,7 @@ from .utils import (CSVLogger, EMA, amp_dtype, cosine_warmup_lr,
 def rollout_losses(model, batch, T, n_steps, criterion, *, feedback_hard=True,
                    ss_prob=1.0, no_healing=False, ar_pushforward=False,
                    feedback_noise_std=0.0, feedback_noise_p=0.0,
-                   head_type="sigmoid"):
+                   head_type="sigmoid", boundary_scale=1.0):
     """batch: (B, L, C, H, W) with L >= T + n_steps.
 
     Step 0 is teacher-forced over the full window (dense supervision).
@@ -82,11 +82,13 @@ def rollout_losses(model, batch, T, n_steps, criterion, *, feedback_hard=True,
             if k == 0:
                 target = batch[:, 1:T + 1, 0:1]          # masks t+1..t+T
                 new = growth_mask(target, batch[:, 0:T, 0:1])
-                losses.append(criterion(logits, target, new_mask=new))
+                losses.append(criterion(logits, target, new_mask=new,
+                                        boundary_scale=boundary_scale))
             else:
                 target = batch[:, k + T:k + T + 1, 0:1]  # mask of the new frame only
                 new = growth_mask(target, batch[:, k + T - 1:k + T, 0:1])
-                losses.append(criterion(logits[:, -1:], target, new_mask=new))
+                losses.append(criterion(logits[:, -1:], target, new_mask=new,
+                                        boundary_scale=boundary_scale))
 
         # head_type read: the monotone-delta head already returns a probability,
         # so do NOT sigmoid a second time (Pitfall 4 / threat T-03-11).
@@ -303,7 +305,9 @@ def main(cfg: Config) -> None:
                         tversky_weight=cfg.tversky_weight,
                         tversky_alpha=cfg.tversky_alpha,
                         tversky_beta=cfg.tversky_beta,
-                        tversky_gamma=cfg.tversky_gamma).to(device)
+                        tversky_gamma=cfg.tversky_gamma,
+                        boundary_weight=cfg.boundary_weight,
+                        head_type=cfg.head_type).to(device)
     no_healing = (cfg.enforce_no_healing if cfg.rollout_no_healing < 0
                   else bool(cfg.rollout_no_healing))
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr,
@@ -358,6 +362,14 @@ def main(cfg: Config) -> None:
             ss_prob = cfg.ss_start + (cfg.ss_end - cfg.ss_start) * frac
         else:
             ss_prob = cfg.ss_end
+        # boundary ramp (MODEL-01): mirror the ss anneal -- grow the crack-front
+        # penalty 0->1 across stage 1, then hold at full strength for stage 2 so
+        # the AR fine-tune always sees the complete objective. No-op when
+        # boundary_weight=0 (default) since SegLoss skips the term entirely.
+        if cfg.boundary_ramp and stage == 1 and cfg.epochs_stage1 > 1:
+            boundary_scale = epoch / (cfg.epochs_stage1 - 1)     # 0 -> 1 across stage 1
+        else:
+            boundary_scale = 1.0
 
         model.train()
         t0 = time.time()
@@ -382,7 +394,7 @@ def main(cfg: Config) -> None:
                     ar_pushforward=bool(cfg.ar_pushforward),
                     feedback_noise_std=cfg.feedback_noise_std,
                     feedback_noise_p=cfg.feedback_noise_p,
-                    head_type=cfg.head_type)
+                    head_type=cfg.head_type, boundary_scale=boundary_scale)
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -422,7 +434,7 @@ def main(cfg: Config) -> None:
                     "epoch_time_s": f"{dt:.1f}"})
         print(f"[epoch {epoch:03d}/{total_epochs}] stage{stage} "
               f"train={train_loss:.5f} val={val_loss:.5f} "
-              f"F1tf={f1_tf:.4f} F1ar={f1_ar:.4f} ({dt:.0f}s)")
+              f"F1tf={f1_tf:.4f} F1ar={f1_ar:.4f} bscale={boundary_scale:.2f} ({dt:.0f}s)")
 
     logger.close()
     plot_training_curves(run_dir / "logs" / "train_log.csv",
