@@ -1,10 +1,42 @@
 # FractureTAU Dashboard -- tau_base
 
-Authoritative, git-diffable static report (D-08). Regenerate with `python results/dashboard/make_report.py --run-name tau_base`. Sections follow the locked D-14 order.
+> # ⚠ DRAFT — NOT A RESULT
+>
+> **This report is NOT paper-ready and must not be cited as a result.** The Phase-2
+> deliverable is the dashboard *machinery* (`make_report.py` + the aggregate/plots/matrix
+> producers), which is accepted. The numbers and figures below are **provisional** and mix
+> two non-publishable sources:
+>
+> - **REAL but OLD:** the **Headline (macro F1)** table, the **Rollout stability** band
+>   (`figures/stability.png`), and the **Coverage matrix** come from the **June-10, 2026
+>   baseline `tau_base` evaluation** — an early, unoptimized BASE model. These are genuine
+>   numbers, but they are stale and do not reflect a current or optimized model.
+> - **SYNTHETIC (removed):** the **Threshold sensitivity** curve and the **Qualitative
+>   (FP/FN) panels** were generated from *synthetic placeholder* `probs.npz`/`gt.npz` during a
+>   smoke run, because the June-10 eval predates the Plan 02-03 raw-probability emission.
+>   Those synthetic figures have been **removed** from the repository so they cannot be
+>   mistaken for results. The sections are retained (D-14 order intact) but marked *pending*.
+>
+> **A real Gilbreth re-eval that emits real `probs.npz`/`gt.npz` (Plan 02-03) is required
+> before this report is paper-ready.** After that re-eval, regenerate everything with one
+> command: `python results/dashboard/make_report.py --run-name tau_base`.
 
-> **Provenance:** Headline / stability / coverage are computed from the REAL tau_base per-frame metrics (16 BASE cases). The threshold-sensitivity curve and FP/FN panels are generated from SYNTHETIC placeholder probs.npz/gt.npz (seeded) because the tau_base eval predates the Plan 02-03 raw-probability emission; a Gilbreth re-eval will replace them with real saved probs. The ConvLSTM-reference macro-F1 column reads 'not yet evaluated' until canonical-keyed reference CSVs are regenerated.
+Authoritative, git-diffable static report scaffold (D-08). Regenerate with `python results/dashboard/make_report.py --run-name tau_base`. Sections follow the locked D-14 order.
+
+> **Provenance:** Headline / stability / coverage are computed from the REAL **June-10, 2026
+> baseline** `tau_base` per-frame metrics (16 BASE cases; `per_frame_metrics.csv` dated
+> 2026-06-10) — an early, unoptimized BASE model, NOT a current/optimized result. The
+> threshold-sensitivity curve and FP/FN panels were generated from SYNTHETIC placeholder
+> `probs.npz`/`gt.npz` (seeded) because the June-10 eval predates the Plan 02-03
+> raw-probability emission; those synthetic figures have been **removed** pending a Gilbreth
+> re-eval that emits real saved probs. `calibration.json` was likewise a synthetic placeholder.
+> The ConvLSTM-reference macro-F1 column reads 'not yet evaluated' until canonical-keyed
+> reference CSVs are regenerated.
 
 ## Headline (macro F1)
+
+> _Source: **June-10, 2026 baseline `tau_base` evaluation** — an early, unoptimized BASE
+> model. REAL numbers, but stale; not a current or optimized result._
 
 Macro F1 (D-01) is the head-to-head **win claim** (per-frame F1 averaged over the rollout); micro F1 (D-02) is a labelled **secondary** column. Degenerate convention: an empty-GT frame scores 1.0 when the prediction is also empty (0/0 -> 1.0).
 
@@ -29,11 +61,17 @@ Macro F1 (D-01) is the head-to-head **win claim** (per-frame F1 averaged over th
 
 ## Rollout stability
 
+> _Source: **June-10, 2026 baseline `tau_base` evaluation** (REAL but stale, early
+> unoptimized BASE model). The figure below is real; the underlying model is not current._
+
 Per-case foreground-F1 curves are resampled onto a common normalized **rollout fraction** [0, 1] grid (`np.interp`); the band is the **median + IQR (25-75%)** across cases at matched rollout fractions (OQ3/D-11) -- never absolute frame index, never mean +/- std.
 
 ![rollout stability band](figures/stability.png)
 
 ## Coverage matrix (16x4)
+
+> _Source: **June-10, 2026 baseline `tau_base` evaluation** (REAL but stale, early
+> unoptimized BASE model). Only the BASE column reflects an actual evaluation._
 
 Every canonical case x mode cell is reported explicitly; cells with no evaluation read **not yet evaluated** (D-09) rather than being dropped. Only BASE is fully regenerated in Phase 1.
 
@@ -58,23 +96,20 @@ Every canonical case x mode cell is reported explicitly; cells with no evaluatio
 
 ## Threshold sensitivity
 
-FractureTAU macro F1 swept over the binarization threshold on the saved probabilities (16 case(s)), no-healing applied. This is **FractureTAU-only** (OQ4): the ConvLSTM reference is pre-binarized / fixed-threshold and is never re-rolled. The threshold is reused, not recomputed -- the Phase-1 calibrated threshold (0.500) is marked (dashed).
+> ⚠ **PENDING REAL EVALUATION** — _The synthetic placeholder figure has been removed. This
+> section requires real saved probabilities (`probs.npz`/`gt.npz`) from a Gilbreth re-eval
+> with the Plan 02-03 probability emission. Regenerate with
+> `python results/dashboard/make_report.py --run-name tau_base` after that re-eval._
 
-![threshold sensitivity curve](figures/threshold.png)
+FractureTAU macro F1 swept over the binarization threshold on the saved probabilities, no-healing applied. This is **FractureTAU-only** (OQ4): the ConvLSTM reference is pre-binarized / fixed-threshold and is never re-rolled. The threshold is reused, not recomputed -- the calibrated threshold is marked (dashed) once a real `calibration.json` exists.
 
 ## Qualitative panels
 
-FP/FN overlays on a dark background: **TP gray (160,160,160)**, **FP red (220,40,40)**, **FN blue (40,90,220)** (D-14). GT and prediction are binarized from the SAME saved probabilities in one orientation (no mirror-flip; Pitfall 2). All-case panels are written under `results/diagnostics/`; a curated subset (best / worst / representative by macro F1) is embedded below.
+> ⚠ **PENDING REAL EVALUATION** — _The synthetic placeholder panels (curated subset under
+> `results/figures/` and all-16 under `results/diagnostics/`) have been removed. FP/FN panels
+> require real saved probabilities (`probs.npz`/`gt.npz`) from a Gilbreth re-eval with the
+> Plan 02-03 probability emission. Regenerate with
+> `python results/dashboard/make_report.py --run-name tau_base` after that re-eval._
 
-**best: test_MS206_V1000** (macro F1 = 0.7603)
-
-![best panel for test_MS206_V1000](figures/panel_best_test_MS206_V1000.png)
-
-**worst: test_MS206_V200** (macro F1 = 0.0989)
-
-![worst panel for test_MS206_V200](figures/panel_worst_test_MS206_V200.png)
-
-**representative: test_inclusions_3_2** (macro F1 = 0.6563)
-
-![representative panel for test_inclusions_3_2](figures/panel_representative_test_inclusions_3_2.png)
+FP/FN overlays on a dark background: **TP gray (160,160,160)**, **FP red (220,40,40)**, **FN blue (40,90,220)** (D-14). GT and prediction are binarized from the SAME saved probabilities in one orientation (no mirror-flip; Pitfall 2). All-case panels are written under `results/diagnostics/`; a curated subset (best / worst / representative by macro F1) is embedded once a real evaluation exists.
 
