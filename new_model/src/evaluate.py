@@ -45,6 +45,13 @@ from .utils import amp_dtype, get_device, plot_metric_over_time, seed_everything
 # sys.path); both pipelines route per-frame emission through this one seam (D-11).
 from frac_metrics import per_frame_metrics, CANONICAL_COLUMNS  # noqa: E402
 from case_registry import assert_manifest                       # noqa: E402
+# Framework-light dashboard persistence (D-12 / METR-07): put results/ on
+# sys.path so the `dashboard` package imports; save_case_probs_gt is numpy-only.
+import sys as _sys                                              # noqa: E402
+_RESULTS = Path(__file__).resolve().parents[2] / "results"
+if str(_RESULTS) not in _sys.path:
+    _sys.path.insert(0, str(_RESULTS))
+from dashboard.probs_io import save_case_probs_gt              # noqa: E402
 
 EPS = 1e-7
 
@@ -80,6 +87,10 @@ def evaluate_case(model, run: RunCache, assembler, cfg: Config, case_dir: Path,
     state = window[T - 1, 0].clone()                       # binary fracture state
 
     rows: List[Dict] = []
+    # Additive raw-prob + GT emission (D-12 / METR-07): accumulate the RAW
+    # probability and GT channel-0 frame per step; persisted fp16 after the loop.
+    prob_stack: List[np.ndarray] = []
+    gt_stack: List[np.ndarray] = []
     TP = TN = FP = FN = 0.0
     bce_sum = 0.0
     t0 = time.time()
@@ -98,6 +109,10 @@ def evaluate_case(model, run: RunCache, assembler, cfg: Config, case_dir: Path,
         state_np = state.cpu().numpy()
         gt_np = gt.cpu().numpy()
         prob_np = prob.detach().cpu().numpy()          # RAW probability (for BCE)
+        # Additive emission (D-12 / METR-07): same orientation as the metrics
+        # arrays — RAW prob (not binarized, not flipud) + GT channel-0 frame.
+        prob_stack.append(prob_np.copy())
+        gt_stack.append(gt_np.astype(np.uint8).copy())
         # Single shared seam (D-11): counts/precision/recall/f1/iou + BCE from
         # one implementation, identical to the old pipeline's emission.
         m = per_frame_metrics(gt_np, state_np, prob_np)
@@ -132,6 +147,9 @@ def evaluate_case(model, run: RunCache, assembler, cfg: Config, case_dir: Path,
     ordered = list(CANONICAL_COLUMNS) + [c for c in df.columns if c not in CANONICAL_COLUMNS]
     df = df[ordered]
     df.to_csv(case_dir / "per_frame_metrics.csv", index=False)
+    # Persist the raw-prob + GT stacks fp16 (D-12 / METR-07) for the threshold
+    # curve (Plan 05) and qualitative panels (Plan 06); no Gilbreth dependency.
+    save_case_probs_gt(case_dir, prob_stack, gt_stack)
     plot_metric_over_time(df, case_dir / "f1_over_time.png", y_col="f1", y_label="F1")
     plot_metric_over_time(df, case_dir / "bce_over_time.png", y_col="bce", y_label="BCE loss")
 
