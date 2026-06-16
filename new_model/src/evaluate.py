@@ -95,10 +95,16 @@ def evaluate_case(model, run: RunCache, assembler, cfg: Config, case_dir: Path,
     bce_sum = 0.0
     t0 = time.time()
 
+    print(f"[eval] {case_dir.name}: head_type={cfg.head_type} "
+          f"(prob read {'direct' if cfg.head_type == 'monotone_delta' else 'via sigmoid'})")
+
     for t in range(T - 1, n - 1):
         with torch.autocast(device.type, dtype=dtype, enabled=dtype is not None):
-            logits = model(window[None])                   # (1, T, 1, H, W)
-        prob = torch.sigmoid(logits[0, -1, 0].float())     # prediction for frame t+1
+            out = model(window[None])                      # (1, T, 1, H, W)
+        if cfg.head_type == "monotone_delta":
+            prob = out[0, -1, 0].float()                   # already a probability (no double-sigmoid)
+        else:
+            prob = torch.sigmoid(out[0, -1, 0].float())    # logits -> prob (unchanged)
         pred_bin = (prob >= cfg.eval_threshold).float()
         if cfg.enforce_no_healing:
             state = torch.maximum(state, pred_bin)
