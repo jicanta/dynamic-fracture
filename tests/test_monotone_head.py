@@ -18,8 +18,13 @@ from pathlib import Path
 import pytest
 
 # ---- real-torch guard (torch is Gilbreth-only on the workstation) ----
+# NOTE: another test module (test_determinism.py) injects a minimal stub
+# ``torch`` into ``sys.modules`` when real torch is absent, so a bare
+# ``import torch`` can succeed against that stub. Import a real submodule
+# (``torch.nn``) so the stub is correctly detected as "not real torch".
 try:
     import torch as _real_torch  # noqa: F401
+    import torch.nn as _real_torch_nn  # noqa: F401
     TORCH_AVAILABLE = True
 except Exception:
     TORCH_AVAILABLE = False

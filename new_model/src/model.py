@@ -141,10 +141,12 @@ class Translator(nn.Module):
 
 class FractureTAU(nn.Module):
     def __init__(self, *, c_in: int, t_steps: int, hid_s: int = 64,
-                 hid_t: int = 384, n_temporal: int = 6, drop_path: float = 0.05):
+                 hid_t: int = 384, n_temporal: int = 6, drop_path: float = 0.05,
+                 head_type: str = "sigmoid"):
         super().__init__()
         self.t_steps = t_steps
         self.hid_s = hid_s
+        self.head_type = head_type           # 'sigmoid' (logits) | 'monotone_delta' (prob)
         self.encoder = Encoder(c_in, hid_s)
         self.translator = Translator(t_steps, hid_s, hid_t, n_temporal, drop_path)
         self.decoder = Decoder(hid_s)
@@ -152,6 +154,10 @@ class FractureTAU(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, C, H, W = x.shape
         assert T == self.t_steps, f"expected T={self.t_steps}, got {T}"
+
+        # Capture the no-healing input mask (channel 0) BEFORE the reshape below
+        # so the monotone-Δ head can recover prev = x_orig[:, :, 0:1].
+        x_orig = x
 
         # pad H, W to multiples of 4 (two 2x downsamples)
         ph = (-H) % 4
@@ -169,7 +175,12 @@ class FractureTAU(nn.Module):
 
         out = self.decoder(z, skip)                # (B*T, 1, Hp, Wp)
         out = out[..., :H, :W]
-        return out.reshape(B, T, 1, H, W)
+        out = out.reshape(B, T, 1, H, W)           # raw logits
+        if self.head_type == "monotone_delta":
+            prev = x_orig[:, :, 0:1]               # no-healing state, input channel 0
+            q = torch.sigmoid(out)                 # non-negative increment in [0, 1]
+            return prev + (1.0 - prev) * q         # probabilistic-OR: >= prev, in [0,1] — PROB
+        return out                                  # sigmoid head: logits (unchanged)
 
 
 def build_model(cfg, c_in: int) -> FractureTAU:
@@ -180,4 +191,5 @@ def build_model(cfg, c_in: int) -> FractureTAU:
         hid_t=cfg.hid_t,
         n_temporal=cfg.n_temporal,
         drop_path=cfg.drop_path,
+        head_type=cfg.head_type,
     )
