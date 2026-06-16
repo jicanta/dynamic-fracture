@@ -28,14 +28,19 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-# ---- repo-root sys.path shim ----
-# dashboard -> results -> dynamic-fracture.
+# ---- repo-root + scripts sys.path shim ----
+# dashboard -> results -> dynamic-fracture; results/scripts holds compare_runs.
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+SCRIPTS = REPO_ROOT / "results" / "scripts"
+for _p in (str(REPO_ROOT), str(SCRIPTS)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-# ---- mode ordering (matches compare_runs.MODES:37) ----
-MODES: List[str] = ["BASE", "SED", "VON", "PRESSURE"]
+# Reuse -- do NOT rebuild -- the already-tested coverage seam and the canonical
+# case/mode ordering (build_coverage emits the 16x4 yes/no grid; CASE_MAP is the
+# identity map over case_registry.TEST_CASE_FOLDERS; MODES is the 4-mode order).
+from compare_runs import CASE_MAP, MODES, build_coverage  # noqa: E402
+from case_registry import TEST_CASE_FOLDERS  # noqa: E402
 
 # ---- honest absent-cell label (D-09) ----
 NOT_EVALUATED: str = "not yet evaluated"
@@ -47,18 +52,48 @@ def build_matrix(new: Dict[str, dict], old: Dict[Tuple[str, str], dict]) -> List
 
     Extends ``compare_runs.build_coverage(new, old)``: in addition to the
     ``baseline_present`` / ``new_present`` yes/no flags, adds a ``status`` cell
-    that is the evaluated metric when present and :data:`NOT_EVALUATED` when the
-    cell is absent. ``new`` is ``{case: metrics}``; ``old`` is
-    ``{(mode, case): metrics}``. Returns one dict per (case, mode) -- 16 * 4 rows.
+    that surfaces the evaluated F1 when present and :data:`NOT_EVALUATED` when the
+    cell is absent (never blank/omitted). ``new`` is ``{case: metrics}``; ``old``
+    is ``{(mode, case): metrics}``. Returns one dict per (case, mode) -- 16 * 4
+    rows, in the same order build_coverage emits them.
+
+    Status derivation (D-09 honest cell):
+      * baseline + new present -> evaluated head-to-head: the new-model F1.
+      * new present, baseline absent -> ``"new only (<F1>)"``.
+      * baseline present, new absent -> ``"baseline only (<F1>)"``.
+      * neither -> :data:`NOT_EVALUATED`.
     """
-    raise NotImplementedError("Plan 04: D-09 honest status matrix (extends build_coverage)")
+    rows: List[dict] = []
+    for r in build_coverage(new, old):
+        case, mode = r["case"], r["mode"]
+        baseline = r["baseline_present"] == "yes"
+        new_present = r["new_present"] == "yes"
+        if baseline and new_present:
+            status = f"{new[case]['f1']:.4f}"
+        elif new_present:
+            status = f"new only ({new[case]['f1']:.4f})"
+        elif baseline:
+            status = f"baseline only ({old[(mode, case)]['f1']:.4f})"
+        else:
+            status = NOT_EVALUATED
+        rows.append({**r, "status": status})
+    return rows
 
 
 def render_matrix_md(matrix_rows: List[dict]) -> str:
     """Render the status matrix as a Markdown table (D-09).
 
-    Header + ``|---|...|`` separator + one row per case (mode columns), drawing
-    absent cells as :data:`NOT_EVALUATED`. Mirrors the Markdown table idiom in
-    ``compare_runs.py:161-167``. This is one section of the report (D-14 order).
+    Header + ``|---|...|`` separator + one row per canonical case (mode columns),
+    drawing absent cells as :data:`NOT_EVALUATED`. Mirrors the Markdown table
+    idiom in ``compare_runs.py:161-167``. Cases follow the canonical
+    ``TEST_CASE_FOLDERS`` order. This is one section of the report (D-14 order).
     """
-    raise NotImplementedError("Plan 04: D-09 render matrix to Markdown")
+    status_by_cell = {(r["case"], r["mode"]): r["status"] for r in matrix_rows}
+    lines = [
+        "| Case | " + " | ".join(MODES) + " |",
+        "|---|" + "|".join(["---"] * len(MODES)) + "|",
+    ]
+    for case in TEST_CASE_FOLDERS:
+        cells = [status_by_cell.get((case, m), NOT_EVALUATED) for m in MODES]
+        lines.append(f"| {case} | " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
