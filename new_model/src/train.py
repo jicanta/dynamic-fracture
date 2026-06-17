@@ -22,7 +22,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from .config import Config, parse_config, TEST_CASE_FOLDERS
+from .config import Config, parse_config, resolve_seed_source, TEST_CASE_FOLDERS
 # Repo root is placed on sys.path by the config import above (Plan 02 shim), so
 # the shared metric seam (D-11) is importable here for threshold calibration.
 from frac_metrics import per_frame_metrics  # noqa: E402
@@ -318,14 +318,15 @@ def main(cfg: Config) -> None:
     total_epochs = cfg.epochs_stage1 + cfg.epochs_stage2
     start_epoch, best_val_f1_ar = 0, -1.0
 
-    # ---- resume ----
+    # ---- resume / warm-start (policy in config.resolve_seed_source) ----
+    # resume  -> restore weights+optimizer+epoch, CONTINUE the schedule.
+    # init    -> warm-start WEIGHTS ONLY from a shared frozen ckpt, FRESH schedule
+    #            + FRESH optimizer (the Stage-2-only sweep fine-tune). resume wins
+    #            so a requeued variant continues its own last.pt, not the init.
     last_ckpt = run_dir / "checkpoints" / "last.pt"
-    resume_path = None
-    if cfg.resume == "auto" and last_ckpt.exists():
-        resume_path = last_ckpt
-    elif cfg.resume not in ("none", "auto"):
-        resume_path = Path(cfg.resume)
-    if resume_path is not None:
+    seed_mode = resolve_seed_source(cfg.resume, cfg.init_from, last_ckpt.exists())
+    if seed_mode == "resume":
+        resume_path = last_ckpt if cfg.resume == "auto" else Path(cfg.resume)
         state = torch.load(resume_path, map_location=device, weights_only=False)
         model.load_state_dict(state["model"])
         ema.load_state_dict(state["ema"])
@@ -333,6 +334,15 @@ def main(cfg: Config) -> None:
         start_epoch = state["epoch"] + 1
         best_val_f1_ar = state.get("best_val_f1_ar", -1.0)
         print(f"[train] resumed from {resume_path} at epoch {start_epoch}")
+    elif seed_mode == "init":
+        init_path = Path(cfg.init_from)
+        state = torch.load(init_path, map_location=device, weights_only=False)
+        model.load_state_dict(state["model"])
+        ema.load_state_dict(state["ema"])     # warm-start EMA from the shared init
+        # start_epoch stays 0, optimizer + best_val_f1_ar stay fresh: the fine-tune
+        # runs its own full schedule and selects its own best.pt.
+        print(f"[train] warm-started weights from {init_path} "
+              f"(fresh epoch schedule + optimizer)")
     if start_epoch >= total_epochs:
         print("[train] nothing to do (already trained to completion).")
         return

@@ -121,6 +121,15 @@ class Config:
 
     # ---- misc ----
     resume: str = "none"                   # none | auto | /path/to/last.pt
+    init_from: str = "none"                # none | /path/to/ckpt.pt — warm-start
+                                           # WEIGHTS ONLY with a FRESH epoch
+                                           # schedule + optimizer (Stage-2-only
+                                           # sweep fine-tune from a shared frozen
+                                           # Stage-1). Distinct from `resume`,
+                                           # which continues a preempted run's
+                                           # epoch counter. `resume` takes
+                                           # precedence (requeue continues its own
+                                           # progress, not the shared init).
 
     # ------------------------------------------------------------------
     @property
@@ -145,6 +154,35 @@ class Config:
             if hasattr(cfg, k):
                 setattr(cfg, k, v)
         return cfg
+
+
+def resolve_seed_source(resume: str, init_from: str, last_ckpt_exists: bool) -> str:
+    """Decide how a run seeds its weights (pure policy; no I/O).
+
+    Returns one of:
+      * ``"resume"`` -- restore weights + optimizer + epoch counter and CONTINUE
+        the same schedule (the run's own ``last.pt`` when ``resume == "auto"``,
+        or an explicit ``--resume /path``).
+      * ``"init"`` -- warm-start: load weights (+ EMA) ONLY from ``--init-from``
+        with a FRESH epoch schedule and FRESH optimizer. This is the Stage-2-only
+        sweep fine-tune from a shared frozen Stage-1 checkpoint.
+      * ``"fresh"`` -- random initialization.
+
+    ``resume`` takes precedence over ``init_from`` so a preempted/requeued sweep
+    variant continues its OWN progress (its ``last.pt``) instead of restarting
+    from the shared init and silently discarding finished epochs. On a variant's
+    FIRST launch its ``last.pt`` does not exist, so ``init_from`` applies and the
+    Stage-2 fine-tune actually runs (the prior ``--resume <stage1>`` form set
+    ``start_epoch`` to the Stage-1 epoch count and tripped the
+    ``start_epoch >= total_epochs`` "nothing to do" guard).
+    """
+    if resume == "auto" and last_ckpt_exists:
+        return "resume"
+    if resume not in ("none", "auto"):
+        return "resume"
+    if init_from not in ("none", ""):
+        return "init"
+    return "fresh"
 
 
 def parse_config(argv=None, description: str = "SOTA dynamic fracture model") -> Config:

@@ -104,14 +104,19 @@ echo "  selection signal    : best logged val_f1_ar (rank_variants --source trai
 nvidia-smi || true
 
 # ---- 1) Stage-2-only fine-tune from the SHARED frozen Stage-1 (budget trick) --
-# --resume the shared checkpoint and --epochs-stage1 0 so ONLY Stage 2 runs;
-# do NOT retrain Stage 1 per variant.
+# --init-from warm-starts the shared Stage-1 WEIGHTS with a FRESH epoch schedule
+# (so --epochs-stage1 0 => only the 12 Stage-2 epochs run); --resume auto makes a
+# preempted/requeued array task continue its OWN last.pt instead of restarting.
+# NOTE: --resume <stage1> (the old form) restored the Stage-1 epoch counter and
+# tripped train.py's "start_epoch >= total_epochs -> nothing to do" guard, so the
+# fine-tune trained ZERO epochs. --init-from is the fix. Do NOT retrain Stage 1.
 "$PYTHON" -m src.train \
     --data-root DATASET \
     --out-root OUTPUTS \
     --run-name "sweep/${VARIANT}" \
     --extra "${EXTRA}" \
-    --resume "${STAGE1_CKPT}" \
+    --init-from "${STAGE1_CKPT}" \
+    --resume auto \
     --epochs-stage1 0 \
     ${COMMON} \
     ${FLAGS}
