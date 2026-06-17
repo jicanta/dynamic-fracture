@@ -44,7 +44,7 @@ if TORCH_AVAILABLE:
     import torch
     import torch.nn.functional as F
 
-    from losses import SegLoss  # noqa: E402
+    from losses import SegLoss, boundary_band  # noqa: E402
 
 
 def _small_logits_target(shape=(2, 1, 33, 17)):
@@ -89,6 +89,42 @@ def test_boundary_scale_monotone():
                   boundary_weight=0.0)
     loss_off = off(logits, target, dist_map=band, boundary_scale=1.0)
     assert float(loss0) == pytest.approx(float(loss_off), abs=1e-7)
+
+
+@pytest.mark.parametrize("shape", [
+    (2, 1, 33, 17),            # 4D (B, C, H, W)
+    (2, 3, 1, 33, 17),         # 5D (B, T, 1, H, W) -- the real training shape
+])
+def test_boundary_band_is_rank_agnostic(shape):
+    # boundary_band must accept the 5D (B, T, 1, H, W) masks SegLoss feeds it in
+    # the teacher-forced and AR-rollout paths, not just 4D. Regression for the
+    # max_pool2d "non-empty 3D or 4D tensor expected" crash that failed every
+    # boundary-on sweep variant.
+    target = torch.zeros(*shape)
+    target[..., 14:18, :] = 1.0            # a horizontal crack stripe
+    band = boundary_band(target, width=1)
+    assert band.shape == target.shape       # shape preserved across the pool/reshape
+    assert torch.all((band == 0) | (band == 1))
+    # the band hugs the stripe (the dilated ring minus the stripe is nonzero)
+    assert float(band.sum()) > 0.0
+    # and is disjoint from the stripe itself (it is the *background* ring)
+    assert float((band * target).sum()) == 0.0
+
+
+def test_boundary_term_default_band_on_5d_training_shape():
+    # The real failure: SegLoss with boundary on and NO dist_map (so it computes
+    # boundary_band internally) on the 5D (B, T, 1, H, W) tensor the rollout
+    # passes. Prior tests always supplied dist_map, so this path was never run.
+    B, T, H, W = 2, 3, 33, 17
+    torch.manual_seed(42)
+    logits = torch.randn(B, T, 1, H, W)
+    target = (torch.rand(B, T, 1, H, W) > 0.5).float()
+    loss_fn = SegLoss(bce_weight=0.0, dice_weight=0.0, tversky_weight=0.0,
+                      boundary_weight=0.5)
+    loss = loss_fn(logits, target, boundary_scale=1.0)   # no dist_map -> boundary_band
+    assert loss.dim() == 0
+    assert torch.isfinite(loss)
+    assert float(loss) > 0.0
 
 
 def test_no_double_sigmoid_prob_path(golden_masks):

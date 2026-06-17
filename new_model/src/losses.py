@@ -82,10 +82,18 @@ def boundary_band(target: torch.Tensor, *, width: int = 1) -> torch.Tensor:
     default boundary target when the caller passes no ``dist_map`` (RESEARCH Open
     Question 3: avoids a SciPy distance-transform dependency mid-phase).
 
-    target: (B, C, H, W). Returns the same shape with values in {0, 1}.
+    target: ``(..., H, W)`` with any number of leading dims. The SegLoss training
+    paths call this with 5D ``(B, T, 1, H, W)`` masks (teacher-forced and AR
+    rollout) as well as 4D ``(B, C, H, W)``; ``F.max_pool2d`` only accepts 3D/4D,
+    so the leading dims are flattened into the batch axis for the spatial dilation
+    and restored afterwards. Returns the same shape as ``target``, values in {0, 1}.
     """
     k = 2 * width + 1
-    dilated = F.max_pool2d(target, kernel_size=k, stride=1, padding=width)
+    orig_shape = target.shape
+    h, w = orig_shape[-2], orig_shape[-1]
+    flat = target.reshape(-1, 1, h, w)               # (N, 1, H, W) — pool is spatial-only
+    dilated = F.max_pool2d(flat, kernel_size=k, stride=1, padding=width)
+    dilated = dilated.reshape(orig_shape)
     return (dilated - target).clamp(0.0, 1.0)
 
 
