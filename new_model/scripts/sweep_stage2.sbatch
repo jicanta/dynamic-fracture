@@ -49,7 +49,12 @@ cd "${SLURM_SUBMIT_DIR}"
 
 # ---- required inputs (fail loud; no silent test-set fallback) -------------
 : "${STAGE1_CKPT:?set STAGE1_CKPT to the SHARED frozen Stage-1 checkpoint (e.g. OUTPUTS/stage1_shared/last.pt) — the budget trick resumes from it with --epochs-stage1 0}"
-: "${VAL_CASES:?set VAL_CASES to the VALIDATION-split cases ONLY — NEVER the 16 BASE TEST cases (leakage, D-06 / T-03-13)}"
+# NOTE: no VAL_CASES needed. Variants are ranked (Plan 06, rank_variants.py
+# --source train-log) on each run's BEST logged val_f1_ar — the AR-rollout F1 on
+# the trainer's temporal-tail validation split (the same signal best.pt selects
+# on). That is leakage-free and never touches the 16 BASE TEST cases, so this
+# script no longer runs a separate (and TEST-only, hence leakage-prone)
+# src.evaluate pass. See Plan-06 SUMMARY / 03-CONTEXT D-06.
 
 EXTRA="${EXTRA:-none}"                 # none | pressure | vonmises | SED
 EPOCHS_STAGE2="${EPOCHS_STAGE2:-15}"   # Stage-2-only fine-tune length (A2 budget gate)
@@ -95,7 +100,7 @@ echo "=== sweep variant [${SLURM_ARRAY_TASK_ID}] ${VARIANT} on $(hostname) ==="
 echo "  shared Stage-1 ckpt : ${STAGE1_CKPT}"
 echo "  Stage-2 epochs      : ${EPOCHS_STAGE2}  (K=4, val_rollout_steps=20)"
 echo "  variant flags       : ${FLAGS}"
-echo "  VAL cases (no leak) : ${VAL_CASES}"
+echo "  selection signal    : best logged val_f1_ar (rank_variants --source train-log)"
 nvidia-smi || true
 
 # ---- 1) Stage-2-only fine-tune from the SHARED frozen Stage-1 (budget trick) --
@@ -111,16 +116,11 @@ nvidia-smi || true
     ${COMMON} \
     ${FLAGS}
 
-# ---- 2) Evaluate on the VAL split into val_eval/ (val-only; D-06) ----------
-# rank_variants.py reads OUTPUTS/sweep/<variant>/val_eval/<case>/per_frame_metrics.csv
-echo "Stage-2 fine-tune done. Evaluating variant ${VARIANT} on the VAL split..."
-"$PYTHON" -m src.evaluate \
-    --data-root DATASET \
-    --out-root OUTPUTS \
-    --run-name "sweep/${VARIANT}" \
-    --eval-dir-name val_eval \
-    --cases ${VAL_CASES}
-
-echo "=== variant ${VARIANT} complete -> OUTPUTS/sweep/${VARIANT}/val_eval/ ==="
-# After all array tasks finish, rank on the val-only seam (Plan 06):
-#   python scripts/rank_variants.py --sweep-root OUTPUTS/sweep
+# ---- 2) Selection signal: the trainer already logged it (leakage-free) -----
+# No separate eval pass. src.train writes OUTPUTS/sweep/<variant>/logs/train_log.csv
+# with a per-epoch val_f1_ar (AR-rollout F1 on the temporal-tail VAL split, the
+# same signal best.pt is selected on). Ranking reads each variant's BEST val_f1_ar
+# from that log — never the 16 BASE TEST cases (D-06 / T-03-13).
+echo "=== variant ${VARIANT} complete -> OUTPUTS/sweep/${VARIANT}/ (logs/train_log.csv) ==="
+# After all array tasks finish, rank on the logged val signal (Plan 06):
+#   python -m scripts.rank_variants --sweep-root OUTPUTS/sweep        # --source train-log (default)

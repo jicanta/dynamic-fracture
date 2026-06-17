@@ -65,6 +65,26 @@ def _make_variant(sweep_root: Path, variant: str, case: str,
     _write_case_csv(sweep_root / variant / "val_eval" / case, counts)
 
 
+# Canonical train_log schema (matches new_model/src training CSVLogger / tau_base).
+_LOG_COLUMNS = ["epoch", "stage", "lr", "train_loss", "val_loss",
+                "val_f1_tf", "val_f1_ar", "epoch_time_s"]
+
+
+def _write_train_log(variant_dir: Path, val_f1_ars: Sequence[float]) -> None:
+    """Lay out <variant_dir>/logs/train_log.csv with per-epoch val_f1_ar values."""
+    import csv
+
+    log = variant_dir / "logs" / "train_log.csv"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=_LOG_COLUMNS)
+        w.writeheader()
+        for i, v in enumerate(val_f1_ars):
+            w.writerow({"epoch": i, "stage": 2, "lr": 1e-4, "train_loss": 0.0,
+                        "val_loss": 0.0, "val_f1_tf": 0.0, "val_f1_ar": v,
+                        "epoch_time_s": 100.0})
+
+
 # Five frames per case -> late-rollout window k = max(1, round(0.2*5)) = 1
 # (only the LAST frame is scored), so the late-rollout F1 is controlled by the
 # final tuple alone — making the expected ranking exact and obvious.
@@ -102,13 +122,56 @@ def test_writes_sorted_ranking_csv(tmp_path):
     _make_variant(sweep_root, "noisy", "val_run_a", _HEAD + [_HALF_TAIL])
 
     out = tmp_path / "ranking.csv"
-    rank_variants.main(["--sweep-root", str(sweep_root), "--out", str(out)])
+    rank_variants.main(
+        ["--sweep-root", str(sweep_root), "--source", "val-eval", "--out", str(out)]
+    )
 
     assert out.exists()
     with open(out, newline="") as f:
         rows = list(csv.DictReader(f))
     assert [r["variant"] for r in rows] == ["pushforward", "noisy"]
     assert float(rows[0]["late_rollout_f1"]) == pytest.approx(1.0)
+
+
+# ---- train-log source (DEFAULT, leakage-free): best logged val_f1_ar ----
+def test_trainlog_ranks_by_best_val_f1_ar(tmp_path):
+    sweep_root = tmp_path / "sweep"
+    # ar_both peaks higher on the val split than loss_P0 -> ranks first.
+    _write_train_log(sweep_root / "ar_both", [0.80, 0.86, 0.85])     # best 0.86
+    _write_train_log(sweep_root / "loss_P0", [0.70, 0.72, 0.715])    # best 0.72
+
+    ranked = rank_variants.rank_variants_trainlog(sweep_root)
+
+    assert [name for name, _ in ranked] == ["ar_both", "loss_P0"]
+    assert ranked[0][1] == pytest.approx(0.86)
+    assert ranked[1][1] == pytest.approx(0.72)
+
+
+def test_main_default_source_is_trainlog(tmp_path):
+    import csv
+
+    sweep_root = tmp_path / "sweep"
+    _write_train_log(sweep_root / "ar_both", [0.80, 0.86])
+    _write_train_log(sweep_root / "loss_P0", [0.70, 0.72])
+
+    out = tmp_path / "ranking.csv"
+    # No --source flag: the default must be the leakage-free train-log path.
+    rank_variants.main(["--sweep-root", str(sweep_root), "--out", str(out)])
+
+    with open(out, newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [r["variant"] for r in rows] == ["ar_both", "loss_P0"]
+    assert "best_val_f1_ar" in rows[0]            # source-specific column label
+    assert float(rows[0]["best_val_f1_ar"]) == pytest.approx(0.86)
+
+
+def test_trainlog_no_logs_raises(tmp_path):
+    # A sweep root with variant dirs but no train_log.csv must fail loud, not
+    # silently produce an empty ranking.
+    sweep_root = tmp_path / "sweep"
+    (sweep_root / "empty_variant").mkdir(parents=True)
+    with pytest.raises((ValueError, SystemExit)):
+        rank_variants.rank_variants_trainlog(sweep_root)
 
 
 def test_refuses_test_set_leakage(tmp_path):

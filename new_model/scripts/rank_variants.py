@@ -1,28 +1,40 @@
 # new_model/scripts/rank_variants.py
-"""Rank Stage-2 sweep variants on the VAL-only late-rollout selection metric.
+"""Rank Stage-2 sweep variants on the VAL-only selection metric.
 
 Companion to ``sweep_stage2.sbatch``. After the directional sweep runs each
-variant as a Stage-2-only fine-tune and evaluates it on the VALIDATION split
-into ``OUTPUTS/sweep/<variant>/val_eval/<case>/per_frame_metrics.csv``, this
-script ranks the variants by the single importable selection seam and writes a
-sorted ``ranking.csv`` (variant, late_rollout_f1).
+variant as a Stage-2-only fine-tune, this script ranks the variants and writes a
+sorted ``ranking.csv``.
+
+Two selection sources (``--source``):
+
+  * ``train-log`` (DEFAULT, leakage-free) -- rank by each variant's BEST logged
+    ``val_f1_ar`` in ``OUTPUTS/sweep/<variant>/logs/train_log.csv``. That scalar
+    is the AR-rollout F1 on the temporal-tail validation split (``val_fraction``)
+    -- the SAME signal ``best.pt`` is selected on. It needs no separate eval and
+    never touches the 16 BASE TEST cases, so it cannot leak (D-06 / T-03-13).
+    This replaces the original ``val_eval`` path, which could only be produced by
+    ``src.evaluate`` for the 16 TEST cases (selection-time leakage).
+
+  * ``val-eval`` (legacy) -- rank by the late-rollout (last-20%) AR macro F1
+    re-derived via ``aggregate.selection_metric_from_eval_dir`` over
+    ``OUTPUTS/sweep/<variant>/val_eval/<case>/per_frame_metrics.csv``. Retained
+    for the case where a genuine (non-TEST) per-case val set is registered; the
+    leakage guard refuses a ``val_eval`` dir that actually holds the BASE cases.
 
 Decision IDs honored here:
-  * D-05 -- ranking criterion is the late-rollout (last-20%) AR macro F1,
-            re-derived via ``aggregate.selection_metric_from_eval_dir``. This
-            module NEVER forks the metric — it imports the one seam.
-  * D-06 -- inputs are VALIDATION per-case CSVs only. The 16 BASE cases are the
-            held-out TEST set; ranking on them is selection-time leakage
-            (threat T-03-13), so the script refuses a ``val_eval`` dir that
-            actually holds the BASE test cases.
+  * D-05 -- the criterion is an AR-rollout val F1; the metric is never forked
+            (train-log reuses the trainer's ``val_f1_ar``; val-eval imports the
+            one ``aggregate`` seam).
+  * D-06 -- selection never runs on the 16 BASE held-out TEST cases.
 
 Framework rule (D-13): numpy/pandas/stdlib + the framework-free aggregate seam
-ONLY. NO torch, NO tensorflow — runs in either conda env.
+ONLY. NO torch, NO tensorflow -- runs in either conda env.
 
 Run (after the sweep produces OUTPUTS/sweep/):
     cd dynamic-fracture/new_model && \
         python -m scripts.rank_variants --sweep-root OUTPUTS/sweep
-    # or:  python scripts/rank_variants.py --sweep-root OUTPUTS/sweep
+    # legacy per-case val set:
+    #   python -m scripts.rank_variants --sweep-root OUTPUTS/sweep --source val-eval
 """
 from __future__ import annotations
 
@@ -47,8 +59,57 @@ from results.dashboard.aggregate import (  # noqa: E402
 from case_registry import TEST_CASE_FOLDERS  # noqa: E402
 
 DEFAULT_EVAL_SUBDIR = "val_eval"
+DEFAULT_LOG_SUBPATH = "logs/train_log.csv"
 # >= half of the 16 held-out cases overlapping -> almost certainly the TEST set.
 _LEAKAGE_OVERLAP_THRESHOLD = 8
+
+
+# ---- train-log source (DEFAULT, leakage-free): best logged val_f1_ar ----
+def _best_val_f1_ar(train_log: str | Path) -> float:
+    """Max ``val_f1_ar`` over all logged epochs in a variant's train_log.csv.
+
+    ``val_f1_ar`` is the AR-rollout F1 on the temporal-tail validation split
+    (``val_fraction``) -- the very scalar ``best.pt`` is selected on. Taking the
+    max over the run mirrors best-checkpoint selection. Leakage-free: it is
+    computed entirely on the trainer's val split, never the 16 BASE TEST cases.
+    """
+    path = Path(train_log)
+    with open(path, newline="") as f:
+        vals = [
+            float(r["val_f1_ar"])
+            for r in csv.DictReader(f)
+            if r.get("val_f1_ar") not in (None, "")
+        ]
+    if not vals:
+        raise ValueError(f"[rank] no val_f1_ar values in {path}")
+    return max(vals)
+
+
+def rank_variants_trainlog(
+    sweep_root: str | Path, log_subpath: str = DEFAULT_LOG_SUBPATH
+) -> List[Tuple[str, float]]:
+    """Rank each ``<sweep_root>/<variant>`` by its best logged ``val_f1_ar``.
+
+    Returns ``[(variant, best_val_f1_ar), ...]`` sorted DESCENDING (winner
+    first). Fails loud if no variant has a ``<log_subpath>`` train log.
+    """
+    root = Path(sweep_root)
+    if not root.is_dir():
+        raise SystemExit(f"[rank] --sweep-root is not a directory: {root}")
+
+    results: List[Tuple[str, float]] = []
+    for variant_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        log = variant_dir / log_subpath
+        if not log.is_file():
+            continue
+        results.append((variant_dir.name, _best_val_f1_ar(log)))
+
+    if not results:
+        raise ValueError(
+            f"[rank] no <variant>/{log_subpath} found under {root}"
+        )
+    results.sort(key=lambda t: t[1], reverse=True)
+    return results
 
 
 def _looks_like_test_set(case_names: Sequence[str]) -> bool:
@@ -100,13 +161,17 @@ def rank_variants(sweep_root: str | Path,
     return results
 
 
-def write_ranking(results: Sequence[Tuple[str, float]], out_path: str | Path) -> Path:
-    """Write the sorted (variant, late_rollout_f1) ranking to a CSV."""
+def write_ranking(
+    results: Sequence[Tuple[str, float]],
+    out_path: str | Path,
+    score_label: str = "late_rollout_f1",
+) -> Path:
+    """Write the sorted (variant, <score_label>) ranking to a CSV."""
     path = Path(out_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["variant", "late_rollout_f1"])
+        w.writerow(["variant", score_label])
         for name, score in results:
             w.writerow([name, f"{score:.6f}"])
     return path
@@ -114,18 +179,29 @@ def write_ranking(results: Sequence[Tuple[str, float]], out_path: str | Path) ->
 
 def main(argv: Sequence[str] | None = None) -> List[Tuple[str, float]]:
     ap = argparse.ArgumentParser(
-        description="Rank Stage-2 sweep variants by the val-only late-rollout "
-                    "selection metric (D-05/D-06)."
+        description="Rank Stage-2 sweep variants by the val-only selection "
+                    "metric (D-05/D-06)."
     )
     ap.add_argument(
         "--sweep-root", required=True,
-        help="Dir whose children are <variant>/<eval-subdir>/<case>/"
-             "per_frame_metrics.csv (e.g. OUTPUTS/sweep). VAL cases only.",
+        help="Sweep dir whose children are the per-variant run dirs "
+             "(e.g. OUTPUTS/sweep).",
+    )
+    ap.add_argument(
+        "--source", choices=("train-log", "val-eval"), default="train-log",
+        help="Selection source. 'train-log' (default, leakage-free): best logged "
+             "val_f1_ar per variant. 'val-eval': late-rollout macro F1 over a "
+             "registered per-case VAL set (legacy; never the 16 BASE TEST cases).",
     )
     ap.add_argument(
         "--eval-subdir", default=DEFAULT_EVAL_SUBDIR,
-        help=f"Per-variant eval subdir holding the VAL cases "
+        help=f"(--source val-eval) per-variant eval subdir holding the VAL cases "
              f"(default: {DEFAULT_EVAL_SUBDIR}).",
+    )
+    ap.add_argument(
+        "--log-subpath", default=DEFAULT_LOG_SUBPATH,
+        help=f"(--source train-log) per-variant train-log path "
+             f"(default: {DEFAULT_LOG_SUBPATH}).",
     )
     ap.add_argument(
         "--out", default=None,
@@ -136,15 +212,20 @@ def main(argv: Sequence[str] | None = None) -> List[Tuple[str, float]]:
     if not args.sweep_root:
         raise SystemExit("[rank] --sweep-root is required")
 
-    results = rank_variants(args.sweep_root, args.eval_subdir)
-    out_path = Path(args.out) if args.out else Path(args.sweep_root) / "ranking.csv"
-    write_ranking(results, out_path)
+    if args.source == "train-log":
+        results = rank_variants_trainlog(args.sweep_root, args.log_subpath)
+        score_label = "best_val_f1_ar"
+    else:
+        results = rank_variants(args.sweep_root, args.eval_subdir)
+        score_label = "late_rollout_f1"
 
-    print(f"[rank] wrote {out_path}")
+    out_path = Path(args.out) if args.out else Path(args.sweep_root) / "ranking.csv"
+    write_ranking(results, out_path, score_label=score_label)
+
+    print(f"[rank] wrote {out_path}  (source={args.source})")
     for i, (name, score) in enumerate(results, start=1):
-        print(f"[rank] {i}. {name}: late_rollout_f1={score:.6f}")
-    print(f"[rank] WINNER: {results[0][0]} "
-          f"(late_rollout_f1={results[0][1]:.6f})")
+        print(f"[rank] {i}. {name}: {score_label}={score:.6f}")
+    print(f"[rank] WINNER: {results[0][0]} ({score_label}={results[0][1]:.6f})")
     return results
 
 
