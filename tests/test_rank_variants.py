@@ -174,6 +174,19 @@ def test_trainlog_no_logs_raises(tmp_path):
         rank_variants.rank_variants_trainlog(sweep_root)
 
 
+def test_trainlog_skips_crashed_variant(tmp_path):
+    # A variant that crashed before its first epoch leaves a header-only
+    # train_log.csv (no val_f1_ar rows). It must be SKIPPED, not abort the
+    # ranking of the variants that did complete (the head_monotone case).
+    sweep_root = tmp_path / "sweep"
+    _write_train_log(sweep_root / "ar_both", [0.80, 0.86])
+    _write_train_log(sweep_root / "head_monotone", [])    # header only -> crashed
+
+    ranked = rank_variants.rank_variants_trainlog(sweep_root)
+    assert [name for name, _ in ranked] == ["ar_both"]    # crashed one dropped
+    assert ranked[0][1] == pytest.approx(0.86)
+
+
 def test_refuses_test_set_leakage(tmp_path):
     # A variant whose val_eval dir actually holds the 16 BASE TEST cases is
     # selection-time leakage (D-06 / T-03-13) and must raise, not rank.

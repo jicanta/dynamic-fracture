@@ -52,10 +52,18 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 # The ONE val-only selection seam (do NOT re-implement the metric here, D-05).
-from results.dashboard.aggregate import (  # noqa: E402
-    late_rollout_selection_metric,
-    selection_metric_from_eval_dir,
-)
+# Imported lazily-tolerant: the DEFAULT train-log ranking does NOT need the
+# dashboard package, and on the cluster only new_model/ is synced (no results/),
+# so a hard top-level import would break `--source train-log`. Defer the failure
+# to the --source val-eval path, which is the only consumer.
+try:
+    from results.dashboard.aggregate import (  # noqa: E402
+        late_rollout_selection_metric,
+        selection_metric_from_eval_dir,
+    )
+except ModuleNotFoundError:
+    late_rollout_selection_metric = None       # type: ignore
+    selection_metric_from_eval_dir = None       # type: ignore
 from case_registry import TEST_CASE_FOLDERS  # noqa: E402
 
 DEFAULT_EVAL_SUBDIR = "val_eval"
@@ -102,11 +110,20 @@ def rank_variants_trainlog(
         log = variant_dir / log_subpath
         if not log.is_file():
             continue
-        results.append((variant_dir.name, _best_val_f1_ar(log)))
+        try:
+            score = _best_val_f1_ar(log)
+        except ValueError:
+            # A variant that crashed before its first epoch leaves a header-only
+            # (or empty) train_log.csv. Skip it with a warning instead of aborting
+            # the whole ranking — the other variants are still valid.
+            print(f"[rank] WARNING: {variant_dir.name} has no logged val_f1_ar "
+                  f"(crashed/empty) — skipping")
+            continue
+        results.append((variant_dir.name, score))
 
     if not results:
         raise ValueError(
-            f"[rank] no <variant>/{log_subpath} found under {root}"
+            f"[rank] no <variant>/{log_subpath} with a usable val_f1_ar under {root}"
         )
     results.sort(key=lambda t: t[1], reverse=True)
     return results
@@ -136,6 +153,12 @@ def rank_variants(sweep_root: str | Path,
     root = Path(sweep_root)
     if not root.is_dir():
         raise SystemExit(f"[rank] --sweep-root is not a directory: {root}")
+    if selection_metric_from_eval_dir is None:
+        raise SystemExit(
+            "[rank] --source val-eval needs results.dashboard.aggregate, which is "
+            "not importable here (the dashboard package isn't on this machine). Use "
+            "the default --source train-log, or run from a checkout that includes "
+            "results/.")
 
     results: List[Tuple[str, float]] = []
     for variant_dir in sorted(p for p in root.iterdir() if p.is_dir()):
