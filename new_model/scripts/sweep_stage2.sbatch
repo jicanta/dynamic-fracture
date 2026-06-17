@@ -29,7 +29,10 @@
 
 #SBATCH --job-name=frac-tau-sweep2
 #SBATCH -A alta
-#SBATCH --partition=standby
+# Partition must match the alta allocation (same as train.sbatch). The original
+# 'standby' free-tier partition is not visible to this account on Gilbreth;
+# a100-80gb already enforces the same 4h --time cap the budget trick relies on.
+#SBATCH --partition=a100-80gb
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=1
