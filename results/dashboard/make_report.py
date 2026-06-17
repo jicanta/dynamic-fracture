@@ -122,8 +122,10 @@ def _headline_section(
 
     Macro F1 (D-01) is the headline win claim; micro F1 (D-02) is a clearly
     labelled secondary column; the late-rollout F1 (D-04) is the last-20% window.
-    The reference column calls ``macro_metrics_from_csv`` on the old-side CSV when
-    present and reads ``not yet evaluated`` otherwise (D-09 honesty).
+    The reference column computes ``late_rollout_macro_f1`` on the old-side CSV
+    (the SAME frac=0.20 late-rollout window as the FractureTAU late column, so the
+    head-to-head is apples-to-apples -- D-01/MODEL-04) when present and reads
+    ``not yet evaluated`` otherwise (D-09 honesty).
     """
     lines = [
         "## Headline (macro F1)",
@@ -144,7 +146,10 @@ def _headline_section(
 
         ref_csv = _ref_csv_path(old_root, ref_mode, case)
         if ref_csv.exists():
-            ref_cell = f"{macro_metrics_from_csv(ref_csv)['macro_f1']:.4f}"
+            # Late-rollout macro F1 (last-20%, frac=0.20), symmetric with the
+            # FractureTAU late column above -- the head-to-head win bar (D-01)
+            # must compare the SAME late-rollout window, not a full-rollout macro.
+            ref_cell = f"{late_rollout_macro_f1(_read_rows(ref_csv)):.4f}"
         else:
             ref_cell = "not yet evaluated"
 

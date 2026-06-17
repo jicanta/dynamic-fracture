@@ -16,6 +16,7 @@ them GREEN.
 """
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -35,7 +36,9 @@ from dashboard.aggregate import (  # noqa: E402
     late_rollout_macro_f1,
     late_rollout_selection_metric,
     macro_f1_from_counts,
+    macro_metrics_from_csv,
 )
+from dashboard import make_report  # noqa: E402
 
 
 def test_macro_from_counts():
@@ -79,3 +82,63 @@ def test_selection_metric_signature(per_frame_csv):
     csv2 = per_frame_csv([(3, 1, 1, 8), (0, 0, 0, 11)], name="val_b")
     result = late_rollout_selection_metric([csv1, csv2])
     assert isinstance(result, float)
+
+
+# ---- MODEL-04 / D-01: the ConvLSTM reference headline cell is LATE-rollout ----
+def _ref_cell(lines, case):
+    """Extract the reference (3rd) cell from the headline row for ``case``.
+
+    Headline row schema: ``| case | new macro | REF | micro | late |``.
+    """
+    row = next(l for l in lines if l.startswith(f"| {case} |"))
+    cells = [c.strip() for c in row.strip("|").split("|")]
+    return cells[2]
+
+
+def test_reference_cell_uses_late_rollout(per_frame_csv, tmp_path):
+    # D-01: the reference column must mirror the FractureTAU late-rollout column
+    # (late_rollout_macro_f1, frac=0.20) so the head-to-head is apples-to-apples
+    # -- NOT the full-rollout macro. Build a CSV where the two differ so a
+    # regression back to the full-rollout macro fails this test.
+    # n=10 -> late window k = max(1, round(0.2*10)) = 2 (last 2 frames).
+    # First 8 frames perfect (F1=1.0); last 2 prec=rec=0.5 (F1=0.5).
+    # full-rollout macro = (8*1.0 + 2*0.5)/10 = 0.9 ; late (last 2) = 0.5.
+    counts = [(10, 0, 0, 1) for _ in range(8)]
+    counts += [(5, 5, 5, 1), (5, 5, 5, 1)]
+    ref_src = per_frame_csv(counts, name="ref_src")
+
+    full_macro = macro_metrics_from_csv(ref_src)["macro_f1"]
+    late = late_rollout_macro_f1(make_report._read_rows(ref_src))
+    assert full_macro != pytest.approx(late)     # guard: the two MUST differ
+
+    case, ref_mode = "F_MS206_V1000_out", "BASE"
+    eval_dir = tmp_path / "eval"
+    (eval_dir / case).mkdir(parents=True)
+    shutil.copy(ref_src, eval_dir / case / "per_frame_metrics.csv")
+    old_root = tmp_path / "old"
+    (old_root / ref_mode / case).mkdir(parents=True)
+    shutil.copy(ref_src, old_root / ref_mode / case / "per_frame_metrics.csv")
+
+    ref_cell = _ref_cell(
+        make_report._headline_section([case], eval_dir, old_root, ref_mode), case
+    )
+    assert ref_cell == f"{late:.4f}"            # late-rollout, not full macro
+    assert ref_cell != f"{full_macro:.4f}"
+
+
+def test_reference_cell_absent_csv_not_yet_evaluated(per_frame_csv, tmp_path):
+    # D-09 honesty: a missing reference CSV reads "not yet evaluated" -- never
+    # blank, never fabricated -- even after the late-rollout rewiring.
+    new_src = per_frame_csv([(10, 0, 0, 1), (5, 5, 5, 1)], name="new_src")
+
+    case, ref_mode = "F_MS206_V1000_out", "BASE"
+    eval_dir = tmp_path / "eval"
+    (eval_dir / case).mkdir(parents=True)
+    shutil.copy(new_src, eval_dir / case / "per_frame_metrics.csv")
+    old_root = tmp_path / "old"                  # no reference CSV under here
+    old_root.mkdir()
+
+    ref_cell = _ref_cell(
+        make_report._headline_section([case], eval_dir, old_root, ref_mode), case
+    )
+    assert ref_cell == "not yet evaluated"
