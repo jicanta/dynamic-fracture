@@ -139,16 +139,62 @@ class Translator(nn.Module):
         return z + self.out(self.blocks(self.inp(z)))
 
 
+class PlainBlock(nn.Module):
+    """Plain residual conv block (no temporal attention): conv3x3 + GroupNorm +
+    GELU, residual add. The ablation-row-5 (D-07) counterpart to TAUBlock —
+    matches its dim-preserving (dim -> dim) contract so it is a drop-in inside the
+    same in/out 1x1 convs of the translator bottleneck."""
+
+    def __init__(self, dim: int, drop_path: float = 0.0):
+        super().__init__()
+        self.norm = _gn(dim)
+        self.conv = nn.Conv2d(dim, dim, 3, padding=1)
+        self.act = nn.GELU()
+        self.dp = DropPath(drop_path)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.dp(self.conv(self.act(self.norm(x))))
+
+
+class PlainTranslator(nn.Module):
+    """Plain-conv translator for ablation row 5 (D-07): IDENTICAL in/out 1x1 conv
+    shapes to ``Translator`` (so the encoder/decoder around it are unchanged), but
+    stacks ``PlainBlock``s instead of ``TAUBlock``s — i.e. NO temporal attention.
+    Because its block parameters differ from the TAU translator, a run with
+    translator_type='plain' CANNOT warm-start from a TAU frozen Stage-1
+    (``--init-from`` would shape-mismatch); it needs its own full train (plan 07)."""
+
+    def __init__(self, t_steps: int, hid_s: int, hid_t: int, n_blocks: int,
+                 drop_path: float = 0.0):
+        super().__init__()
+        c = t_steps * hid_s
+        self.inp = nn.Conv2d(c, hid_t, 1)
+        dprs = torch.linspace(0, drop_path, n_blocks).tolist()
+        self.blocks = nn.Sequential(*[PlainBlock(hid_t, dp) for dp in dprs])
+        self.out = nn.Conv2d(hid_t, c, 1)
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return z + self.out(self.blocks(self.inp(z)))
+
+
 class FractureTAU(nn.Module):
     def __init__(self, *, c_in: int, t_steps: int, hid_s: int = 64,
                  hid_t: int = 384, n_temporal: int = 6, drop_path: float = 0.05,
-                 head_type: str = "sigmoid"):
+                 head_type: str = "sigmoid", translator_type: str = "tau"):
         super().__init__()
         self.t_steps = t_steps
         self.hid_s = hid_s
         self.head_type = head_type           # 'sigmoid' (logits) | 'monotone_delta' (prob)
+        self.translator_type = translator_type  # 'tau' (TAU blocks) | 'plain' (plain conv) — D-07
         self.encoder = Encoder(c_in, hid_s)
-        self.translator = Translator(t_steps, hid_s, hid_t, n_temporal, drop_path)
+        # CRITICAL (D-07 / RESEARCH Pitfall 5): the plain translator has DIFFERENT
+        # parameters than the TAU translator, so a --init-from <tau_stage1> warm-start
+        # would shape-mismatch. Ablation row 5 needs its OWN full Stage-1+Stage-2 train
+        # (plan 07), NOT the shared-frozen-Stage-1 budget trick used for TAU sweeps.
+        if translator_type == "tau":
+            self.translator = Translator(t_steps, hid_s, hid_t, n_temporal, drop_path)
+        else:
+            self.translator = PlainTranslator(t_steps, hid_s, hid_t, n_temporal, drop_path)
         self.decoder = Decoder(hid_s)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -192,4 +238,5 @@ def build_model(cfg, c_in: int) -> FractureTAU:
         n_temporal=cfg.n_temporal,
         drop_path=cfg.drop_path,
         head_type=cfg.head_type,
+        translator_type=cfg.translator_type,
     )
