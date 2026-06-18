@@ -25,6 +25,7 @@ from case_registry import TEST_CASE_FOLDERS  # noqa: E402  (re-export; keys used
 
 EXTRA_CHOICES = ("none", "pressure", "vonmises", "SED")
 HEAD_TYPE_CHOICES = ("sigmoid", "monotone_delta")
+TRANSLATOR_TYPE_CHOICES = ("tau", "plain")
 
 
 @dataclass
@@ -54,6 +55,7 @@ class Config:
     n_temporal: int = 6                    # TAU blocks in the translator
     drop_path: float = 0.05
     head_type: str = "sigmoid"             # 'sigmoid' (logits) | 'monotone_delta' (probabilistic-OR prob)
+    translator_type: str = "tau"           # 'tau' (SimVP TAU blocks) | 'plain' (plain conv) — ablation row 5 (D-07)
 
     # ---- loss ----
     bce_weight: float = 1.0
@@ -207,4 +209,6 @@ def parse_config(argv=None, description: str = "SOTA dynamic fracture model") ->
         raise SystemExit(f"--extra must be one of {EXTRA_CHOICES}, got '{cfg.extra}'")
     if cfg.head_type not in HEAD_TYPE_CHOICES:
         raise SystemExit(f"--head-type must be one of {HEAD_TYPE_CHOICES}, got '{cfg.head_type}'")
+    if cfg.translator_type not in TRANSLATOR_TYPE_CHOICES:
+        raise SystemExit(f"--translator-type must be one of {TRANSLATOR_TYPE_CHOICES}, got '{cfg.translator_type}'")
     return cfg
