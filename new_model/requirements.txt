@@ -4,3 +4,6 @@ pandas>=2.0
 matplotlib>=3.7
 pillow>=10.0
 tqdm>=4.65
+optuna>=4.0
+scipy>=1.11
+# Gilbreth install: /scratch/gilbreth/jcantare/envs/fracture-sota/bin/pip install "optuna>=4.0" scipy
