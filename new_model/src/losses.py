@@ -32,7 +32,9 @@ def focal_loss(logits: torch.Tensor, target: torch.Tensor,
                *, inputs_are_probs: bool = False) -> torch.Tensor:
     p = logits if inputs_are_probs else torch.sigmoid(logits)
     if inputs_are_probs:
-        bce = F.binary_cross_entropy(p, target, reduction="none")
+        # BCE on probabilities is unsafe under autocast — float32 + autocast off.
+        with torch.autocast(device_type=p.device.type, enabled=False):
+            bce = F.binary_cross_entropy(p.float(), target.float(), reduction="none")
     else:
         bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
     pt = p * target + (1.0 - p) * (1.0 - target)
@@ -135,7 +137,12 @@ class SegLoss(nn.Module):
                 # growth ring (and its immediate background, where false
                 # negatives stall the autoregressive rollout)
                 if inputs_are_probs:
-                    bce = F.binary_cross_entropy(p_pred, target, reduction="none")
+                    # BCE on probabilities is unsafe under autocast (PyTorch bans it:
+                    # log() loses precision in bf16/fp16). Compute it in float32 with
+                    # autocast disabled. The sigmoid/_with_logits path is unaffected.
+                    with torch.autocast(device_type=p_pred.device.type, enabled=False):
+                        bce = F.binary_cross_entropy(
+                            p_pred.float(), target.float(), reduction="none")
                 else:
                     bce = F.binary_cross_entropy_with_logits(
                         logits, target, pos_weight=self.pos_weight, reduction="none")
@@ -143,7 +150,9 @@ class SegLoss(nn.Module):
                 bce = (bce * w).sum() / w.sum().clamp_min(1.0)
             else:
                 if inputs_are_probs:
-                    bce = F.binary_cross_entropy(p_pred, target)
+                    # float32 + autocast disabled — see growth-weight branch above.
+                    with torch.autocast(device_type=p_pred.device.type, enabled=False):
+                        bce = F.binary_cross_entropy(p_pred.float(), target.float())
                 else:
                     bce = F.binary_cross_entropy_with_logits(
                         logits, target, pos_weight=self.pos_weight)
