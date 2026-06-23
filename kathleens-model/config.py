@@ -121,12 +121,25 @@ ENFORCE_NO_HEALING = True   # psm default; matches her runs
 # ---------------------------------------------------------------------------
 # Verification: build_datasets test-case key  ->  reference output-folder key
 # ---------------------------------------------------------------------------
-# Now a 16-entry 1:1 identity map over the canonical keys (D-03/C-03). The old
-# 8-entry table pointed at idiosyncratic legacy folder names; after baselines are
-# regenerated under canonical keys (Plan 08) the legacy indirection is removed so
-# every case resolves to its GT without a hand-maintained alias. (compare_runs.py
-# ::CASE_MAP is rebuilt separately in Plan 07.)
-CASE_TO_REF = {k: k for k in TEST_CASE_FOLDERS}   # 1:1 identity post-regen (D-03/C-03)
+# Legacy-alias map: build_datasets canonical test-case key -> ACTUAL frozen
+# reference output-folder name on disk under ALL_OUTPUTS/.../{BASE,SED}/.
+# ALL_OUTPUTS is the SHA256-frozen ground truth and is NEVER renamed/symlinked;
+# the canonical-key regeneration (once envisioned for Plan 08) never ran on disk,
+# so the indirection from canonical keys to the idiosyncratic legacy folder names
+# must live here in the editable orchestration layer. ref_pred_csv() consumes this
+# via .get(case_key) and guards every path with p.exists(), so cases whose folder
+# is absent for a given mode (e.g. no BASE folder for V100/V200/V400, no SED folder
+# for MS5) resolve to None and are skipped. Result: verify.py --mode 1 resolves the
+# 4 overlapping BASE cases, --mode 4 resolves the 6 overlapping SED cases (D-06/D-03).
+CASE_TO_REF = {
+    "test_horizontal_layers_4": "testDS_F_horizontal-layers_4_out",
+    "test_inclusions_1_2":      "testDS_F_inclusions_1_2_out",
+    "test_MS206_V1000":         "test_MS206_V1000_ex",
+    "test_MS5_V150ms_inc":      "test_MS5_150ms_inc",
+    "test_MS206_V100":          "test_MS206_V100",
+    "test_MS206_V200":          "test_MS206_V200",
+    "test_MS206_V400":          "test_MS206_V400",
+}
 
 
 def mode_info(mode: int) -> dict:
