@@ -1,3 +1,28 @@
+[project]
+name = "dynamic-fracture-analysis"
+version = "0.1.0"
+description = "Phase 5 analysis + paper environment for FractureTAU physical metrics."
+requires-python = ">=3.11"
+# Analysis/paper env only (CPU-friendly). This pins VERSIONS for reproducibility
+# (PAPER-03); it does NOT and cannot guarantee GPU bit-determinism — see
+# 05-RESEARCH.md Pitfall 6/9. The frozen training env stays on conda.
+dependencies = [
+    "scikit-image>=0.26",
+    "scipy>=1.11",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+    "pandas>=2.0",
+    "fvcore>=0.1.5",
+    "ptflops>=0.7.5",
+    "torchinfo>=1.8",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "medpy>=0.5.2",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
