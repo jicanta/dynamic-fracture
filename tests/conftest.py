@@ -225,3 +225,92 @@ def multi_frame_case(per_frame_csv) -> Path:
         tn = total - tp - fp - fn
         counts.append((tp, fp, fn, tn))
     return per_frame_csv(counts, name="multi_frame_case")
+
+
+# ===================================================================== #
+# Phase 5 (physical-metrics) fixtures — added in Plan 05-01 (Wave 0).    #
+# These encode the golden invariants the RED PHYS tests assert and the   #
+# Wave-2 phys_metrics modules must satisfy.                              #
+# ===================================================================== #
+
+# Crack-stack geometry (small stand-in; H/W chosen so a growing horizontal
+# crack stays a single connected component under 4- and 8-connectivity).
+CRACK_FRAMES: int = 8
+CRACK_H: int = 32
+CRACK_W: int = 48
+CRACK_ONSET: int = 2          # first frame with >=1 positive pixel (PHYS-03 contract)
+
+
+@pytest.fixture
+def growing_crack_stack() -> np.ndarray:
+    """Monotone non-healing crack stack; onset==2, length non-decreasing (PHYS-03).
+
+    Returns a ``(CRACK_FRAMES=8, CRACK_H=32, CRACK_W=48)`` uint8 mask stack.
+    Frames 0-1 are EMPTY (no positive pixels); from frame 2 onward a single
+    connected horizontal crack on the centre row grows in length, each frame a
+    strict superset of the previous one. Therefore: ``time_to_onset == 2`` (the
+    first frame with >=1 positive pixel) and ``crack_length_curve`` is
+    monotonically non-decreasing. Adapts the channel-0 monotone-growth idiom of
+    ``synth_runs`` (conftest.py:81-83); fully deterministic (no RNG needed).
+    """
+    stack = np.zeros((CRACK_FRAMES, CRACK_H, CRACK_W), dtype=np.uint8)
+    mid = CRACK_H // 2
+    n_growing = CRACK_FRAMES - CRACK_ONSET            # frames 2..7 -> 6 steps
+    for t in range(CRACK_ONSET, CRACK_FRAMES):
+        step = t - CRACK_ONSET + 1                    # 1..n_growing
+        length = int(round(step / n_growing * CRACK_W))   # 8,16,...,48 (<= W)
+        length = max(1, min(CRACK_W, length))
+        stack[t, mid, :length] = 1                    # contiguous => 1 component
+    # invariants the PHYS-03 test relies on
+    assert stack[:CRACK_ONSET].sum() == 0                       # empty before onset
+    assert stack[CRACK_ONSET].sum() >= 1                        # onset frame nonempty
+    areas = stack.reshape(CRACK_FRAMES, -1).sum(axis=1)
+    assert np.all(np.diff(areas) >= 0)                         # non-decreasing
+    return stack
+
+
+@pytest.fixture
+def perfectly_calibrated_probs() -> Tuple[np.ndarray, np.ndarray]:
+    """Perfectly-calibrated (probs, gts) so reliability ECE == 0 exactly (PHYS-05).
+
+    Returns ``(probs, gts)`` 1-D arrays of length ``15 * 270 = 4050``. Probs take
+    15 distinct values at the centres of 15 equal-width bins, ``p_i=(i+0.5)/15``.
+    For each value, EXACTLY ``round(p_i * 270)`` of the 270 group members have
+    ``gt == 1`` (an exact integer count, since ``p_i*270=(2i+1)*9``), so within
+    every bin the mean confidence equals the empirical positive fraction
+    (conf == acc) and the expected-calibration-error is 0 to machine precision.
+    Seeded with ``np.random.default_rng(42)`` only to shuffle row order (ECE is
+    order-invariant) so the arrays are not trivially sorted.
+    """
+    rng = np.random.default_rng(SEED)
+    n_bins = 15
+    group_size = 270                                  # divisible by 30 -> exact counts
+    p_values = (np.arange(n_bins) + 0.5) / n_bins     # bin centres
+    probs_parts: List[np.ndarray] = []
+    gts_parts: List[np.ndarray] = []
+    for p in p_values:
+        n_pos = int(round(float(p) * group_size))     # exact: (2i+1)*9
+        g = np.zeros(group_size, dtype=np.uint8)
+        g[:n_pos] = 1
+        probs_parts.append(np.full(group_size, float(p), dtype=np.float64))
+        gts_parts.append(g)
+    probs = np.concatenate(probs_parts)
+    gts = np.concatenate(gts_parts)
+    perm = rng.permutation(probs.size)                # order-invariant shuffle
+    return probs[perm], gts[perm]
+
+
+@pytest.fixture
+def tiny_torch_module() -> Tuple[object, int]:
+    """Tiny torch Module with a KNOWN parameter count for efficiency probes (PHYS-06).
+
+    Returns ``(module, expected_param_count)`` where ``module`` is a single
+    ``nn.Conv2d(1, 2, 3)`` => ``1*2*3*3 + 2 = 20`` trainable parameters. ``torch``
+    is imported LOCALLY so non-torch test paths never pay the import cost.
+    """
+    import torch.nn as nn                             # local import (PHYS-06 only)
+
+    module = nn.Conv2d(1, 2, 3)                       # 1*2*3*3 weights + 2 biases
+    expected = 1 * 2 * 3 * 3 + 2                       # == 20
+    assert sum(p.numel() for p in module.parameters()) == expected
+    return module, expected
