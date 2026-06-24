@@ -139,25 +139,39 @@ def evaluate_case(model, run: RunCache, assembler, cfg: Config, case_dir: Path,
             "accuracy": acc,
         })
 
-        save_mask_png(frames_dir / f"mask_{step:06d}.png", state_np)
-        if cfg.viz_every > 0 and step % cfg.viz_every == 0:
-            save_compare_png(viz_dir / f"compare_{step:06d}.png", gt_np, state_np)
+        if not cfg.teacher_forced:        # AR masks only; the TF pass writes the CSV (PHYS-04)
+            save_mask_png(frames_dir / f"mask_{step:06d}.png", state_np)
+            if cfg.viz_every > 0 and step % cfg.viz_every == 0:
+                save_compare_png(viz_dir / f"compare_{step:06d}.png", gt_np, state_np)
 
-        # slide window: next frame uses TRUE exogenous channels + predicted mask
+        # slide window: next frame uses TRUE exogenous channels + fed-back mask
         nxt = torch.from_numpy(feats[t + 1]).to(device).clone()
-        nxt[0] = state
+        if cfg.teacher_forced:
+            # PHYS-04 (freeze-legal per D-14, inference only): feed GROUND-TRUTH
+            # channel-0 back each step (NO no-healing accumulation on the GT feed).
+            # Only the FEEDBACK source changes — the per_frame_metrics above still
+            # measure the model's prediction vs GT for this step.
+            nxt[0] = gt
+        else:
+            nxt[0] = state
         window = torch.cat([window[1:], nxt[None]], dim=0)
 
     df = pd.DataFrame(rows)
     # Canonical D-13 columns first (exact order), then extra provenance columns.
     ordered = list(CANONICAL_COLUMNS) + [c for c in df.columns if c not in CANONICAL_COLUMNS]
     df = df[ordered]
-    df.to_csv(case_dir / "per_frame_metrics.csv", index=False)
-    # Persist the raw-prob + GT stacks fp16 (D-12 / METR-07) for the threshold
-    # curve (Plan 05) and qualitative panels (Plan 06); no Gilbreth dependency.
-    save_case_probs_gt(case_dir, prob_stack, gt_stack)
-    plot_metric_over_time(df, case_dir / "f1_over_time.png", y_col="f1", y_label="F1")
-    plot_metric_over_time(df, case_dir / "bce_over_time.png", y_col="bce", y_label="BCE loss")
+    # PHYS-04: the teacher-forced pass writes a PARALLEL per_frame_metrics_tf.csv
+    # (and *_tf plots/summary) so it never clobbers the AR CSV / probs / masks —
+    # the default AR path (suffix == "") stays byte-identical.
+    suffix = "_tf" if cfg.teacher_forced else ""
+    df.to_csv(case_dir / f"per_frame_metrics{suffix}.csv", index=False)
+    if not cfg.teacher_forced:
+        # Persist the raw-prob + GT stacks fp16 (D-12 / METR-07) for the threshold
+        # curve (Plan 05) and qualitative panels (Plan 06); no Gilbreth dependency.
+        # AR run only, so the teacher-forced pass cannot clobber the AR probs.npz.
+        save_case_probs_gt(case_dir, prob_stack, gt_stack)
+    plot_metric_over_time(df, case_dir / f"f1_over_time{suffix}.png", y_col="f1", y_label="F1")
+    plot_metric_over_time(df, case_dir / f"bce_over_time{suffix}.png", y_col="bce", y_label="BCE loss")
 
     prec = TP / (TP + FP) if TP + FP > 0 else 0.0
     rec = TP / (TP + FN) if TP + FN > 0 else 0.0
@@ -173,11 +187,12 @@ def evaluate_case(model, run: RunCache, assembler, cfg: Config, case_dir: Path,
         "elapsed_s": time.time() - t0,
         "threshold": cfg.eval_threshold,
         "enforce_no_healing": cfg.enforce_no_healing,
+        "teacher_forced": cfg.teacher_forced,   # PHYS-04 data-source flag (D-14 freeze-legal)
         # ---- reproducibility provenance (D-14) ----
         "seed": cfg.seed,
         "checkpoint_sha256": checkpoint_sha256,
     }
-    with open(case_dir / "summary.json", "w") as f:
+    with open(case_dir / f"summary{suffix}.json", "w") as f:
         json.dump(summary, f, indent=2)
     print(f"[eval] {case_dir.name}: F1={f1:.4f} P={prec:.4f} R={rec:.4f} "
           f"acc={acc:.4f} ({len(rows)} frames, {summary['elapsed_s']:.0f}s)")
@@ -265,6 +280,8 @@ def main(cfg: Config) -> None:
         print(f"[eval] using calibrated threshold {thr:.3f} from {calib_path}")
     train_cfg.eval_dir_name = cfg.eval_dir_name
     train_cfg.enforce_no_healing = cfg.enforce_no_healing
+    train_cfg.teacher_forced = cfg.teacher_forced   # PHYS-04 flag honored at eval time
+
     train_cfg.viz_every = cfg.viz_every
     train_cfg.out_root = cfg.out_root
     train_cfg.run_name = cfg.run_name

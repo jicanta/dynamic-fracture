@@ -118,6 +118,10 @@ class Config:
                                            # CLI threshold is the default, use it
     eval_dir_name: str = "eval"            # output subdir; change for threshold sweeps
     enforce_no_healing: bool = True
+    teacher_forced: bool = False           # PHYS-04: feed GT channel-0 each step
+                                           # (inference-only, freeze-legal D-14) ->
+                                           # writes per_frame_metrics_tf.csv; AR path
+                                           # is byte-identical when left False
     viz_every: int = 25                    # save GT|pred comparison every N frames
     cases: List[str] = field(default_factory=list)  # empty = all available
 
