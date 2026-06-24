@@ -141,6 +141,28 @@ CASE_TO_REF = {
     "test_MS206_V400":          "test_MS206_V400",
 }
 
+# Per-mode blocklist of (mode -> {case_key}) whose ON-DISK reference export is a
+# known-corrupt/non-comparable batch and MUST NOT gate parity verification.
+# Provenance investigated 2026-06-24 (Phase 06, Plan 03), evidence:
+#   - SED (mode 4) test_MS206_V100: all 295 reference mask PNGs are byte-identical
+#     (1 unique md5 -> empty/all-background); SUM(predicted-positive)=0 across the
+#     entire AR rollout. The same frozen SED .keras reproduces real fracture here
+#     (tp=7014), so her export is degenerate, not a faithful prediction.
+#   - SED test_MS206_V200 / _V400: SUM(fp)=0 over the whole rollout (precision==1.0),
+#     impossible for a real threshold-0.5 AR rollout.
+#   - SED test_MS206_V1000 (folder test_MS206_V1000_ex): over-predicts ~65% vs the
+#     faithful pipeline (ref micro-F1 0.94 vs reproduced 0.61) -- a different batch
+#     (distinct `test_MS206_*` naming vs the faithful `testDS_F_*_out` batch).
+# Her generator uses pred_threshold=0.5 (ALL_INPUTS/CODE/source/
+# predict_full_simulation_metrics.py:285), so this is NOT a threshold convention --
+# these SED MS206 refs come from a broken/older generation. The faithful SED refs
+# (testDS_F_horizontal-layers_4_out, testDS_F_inclusions_1_2_out) reproduce
+# bit-exactly (|ΔF1|=0). BASE (mode 1) test_MS206_V1000_ex IS faithful (Tier-1 PASS,
+# |ΔF1|=0) and is therefore NOT excluded.
+EXCLUDED_REFS = {
+    4: {"test_MS206_V100", "test_MS206_V200", "test_MS206_V400", "test_MS206_V1000"},
+}
+
 
 def mode_info(mode: int) -> dict:
     if mode not in MODE_INFO:
@@ -150,7 +172,10 @@ def mode_info(mode: int) -> dict:
 
 def ref_pred_csv(mode: int, case_key: str) -> Optional[Path]:
     """Path to her reference per_frame_metrics.csv for (mode, case_key), or None
-    if she did not produce that case for that model."""
+    if she did not produce that case for that model, or the on-disk reference is a
+    known-corrupt export for this mode (see EXCLUDED_REFS)."""
+    if case_key in EXCLUDED_REFS.get(mode, ()):
+        return None
     ref_name = CASE_TO_REF.get(case_key)
     if ref_name is None:
         return None
