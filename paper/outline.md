@@ -110,7 +110,7 @@ byte-deterministic, so the 3-seed spread is the honest run-to-run variation).
   noted as a draft TODO.
 
 ### 8. Reproducibility (short)
-- Pinned environment (uv.lock), Slurm on Gilbreth A100, documented train/val
+- Pinned environment (uv.lock), Slurm on a university HPC A100, documented train/val
   split, seed=42 base. Results reported as **mean±std**, NOT bit-determinism
   (bf16 AMP + cuDNN non-determinism). Efficiency: FractureTAU 10,323,201
   params, 2.310e11 FLOPs/fwd, 3.826 A100-h. `PHYS_REPORT.md` §7.
