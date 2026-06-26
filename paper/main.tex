@@ -20,8 +20,9 @@
 A SimVP--TAU Model that Outperforms a Reproduced ConvLSTM Baseline\\
 under Autoregressive Rollout}
 
-\author{SURF Purdue 2026 --- Dynamic Fracture Project\\
-\texttt{(workshop draft)}}
+\author{Juan Ignacio Cantarella \quad Marisol Koslowski\\
+Purdue University, West Lafayette, IN, USA\\
+\texttt{(SURF 2026 --- workshop draft)}}
 
 \date{\today}
 
@@ -249,9 +250,9 @@ $+$ strain-energy density (SED)      & 0.58 \\
 \label{sec:repro-baseline}
 
 The credibility of the head-to-head rests on a baseline that is \emph{retrained},
-not merely inherited. We reproduced Kathleen's original ConvLSTM from scratch in
-its native TensorFlow/Keras pipeline and evaluated it under the identical AR
-protocol. We report this reproduction at an \textbf{honest, verifiable scope of
+not merely inherited. We reproduced the original ConvLSTM fracture model of
+Martinus~\citep{martinus2024thesis} from scratch in its native TensorFlow/Keras
+pipeline and evaluated it under the identical AR protocol. We report this reproduction at an \textbf{honest, verifiable scope of
 4 BASE / 2 SED} configurations: the corrupt MS206 SED reference exports were
 excluded rather than silently included. The frozen reproduction
 (\texttt{base\_regen}) is the reference used throughout Sec.~\ref{sec:headline}.
@@ -374,7 +375,7 @@ prediction, broader microstructure coverage, and a fuller SOTA positioning study
 Figure~\ref{fig:reliability} shows the aggregate reliability diagram over all 16
 cases (aggregate ECE $0.0435$).
 
-\begin{figure}[h]
+\begin{figure}[tb]
 \centering
 \includegraphics[width=0.6\linewidth]{reliability.png}
 \caption{Aggregate reliability diagram over the 16 test cases (ECE $0.0435$),
@@ -387,6 +388,15 @@ The full five-row leave-one-out input ablation and the extended per-seed
 significance tables are maintained alongside the measured artifacts and will be
 folded into a longer version of this paper.
 
+\section*{Acknowledgments}
+This work was carried out under the Summer Undergraduate Research Fellowship
+(SURF) program at Purdue University. We thank our mentors Kyle Jung and Joshua
+Block for their guidance throughout the project, and we gratefully acknowledge
+the foundational ConvLSTM fracture-prediction work of Kathleen
+Martinus~\citep{martinus2024thesis}, whose model is reproduced as the reference
+baseline in this study.
+
+\clearpage
 \bibliographystyle{plainnat}
 \bibliography{refs}
 
