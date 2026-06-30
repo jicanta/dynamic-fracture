@@ -95,8 +95,17 @@ SimVP+TAU recipe and specializes it for binary fracture-mask forecasting.
 
 \paragraph{ML for fracture.}
 Deep models have been used to predict fracture patterns and mechanisms in
-crystalline and 2D materials~\citep{hsu2020fracture,lew2021fracture}. These works
-target different materials, geometries, and outputs than ours.
+crystalline and 2D materials~\citep{hsu2020fracture,lew2021fracture}. A
+complementary line of work casts crack evolution as a PDE-surrogate problem:
+operator-learning methods such as the Fourier Neural Operator~\citep{li2021fno}
+learn solution maps for parametric PDEs, and variational DeepONets have been
+specialized to predict crack paths in brittle materials~\citep{goswami2022deeponet}.
+Closest to our forecasting task, recent frameworks target rapid forecasting of
+crack propagation directly~\citep{yan2024crackforecast}, while benchmarking studies
+quantify how well ML surrogates expedite phase-field simulations of brittle
+fracture~\citep{hamdi2025phasefield}. These works target different materials,
+geometries, governing physics, and outputs than ours, and---crucially---do not
+share our continuous autoregressive rollout protocol.
 
 \paragraph{Non-comparability caveat (positioning, not benchmarking).}
 We position FractureTAU \emph{conceptually} against the architectures above. We do
