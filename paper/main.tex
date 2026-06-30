@@ -299,7 +299,7 @@ over-growth.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.72\linewidth]{length_test_emergency_horizontal.png}
+\includegraphics[width=0.72\linewidth]{length_test_emergency_horizontal}
 \caption{Crack length over time and onset (representative case
 test\_emergency\_horizontal): ground truth vs.\ FractureTAU AR prediction. The
 model captures onset timing and growth trend, with a mild conservative
@@ -316,7 +316,7 @@ freeze-legal; both curves use the degenerate-aware $F_1$.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.72\linewidth]{f1_horizon_test_emergency_horizontal.png}
+\includegraphics[width=0.72\linewidth]{f1_horizon_test_emergency_horizontal}
 \caption{Teacher-forced vs.\ autoregressive per-frame $F_1$ over the rollout
 horizon (test\_emergency\_horizontal). The TF--AR gap grows with horizon,
 quantifying autoregressive error accumulation.}
@@ -332,7 +332,7 @@ is designed to prevent.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.72\linewidth]{stability.png}
+\includegraphics[width=0.72\linewidth]{stability}
 \caption{Rollout-stability band: per-case foreground-$F_1$ resampled to a common
 normalized rollout fraction; line is the median, band is the 25--75\% IQR across
 the 16 cases.}
@@ -346,9 +346,28 @@ probability, never by a binarized mask) and report the Expected Calibration Erro
 \textbf{0.0435}; the reliability diagram is in the appendix
 (Fig.~\ref{fig:reliability}).
 
-\paragraph{Qualitative panels (TODO).}
-Spatial false-positive/false-negative overlay panels were not generated for this
-draft; we flag them as a TODO rather than fabricate a figure.
+\paragraph{Qualitative panels.}
+Figure~\ref{fig:fpfn} overlays the spatial false-positive (FP) and false-negative
+(FN) structure of FractureTAU's AR prediction against ground truth for the
+representative failure case \texttt{test\_inclusions\_1\_2}, at three points along
+the rollout. The panel exposes the dominant error mode on this case: the model
+\emph{hallucinates} short crack segments on the weak, low-$G_c$ inclusions (FP,
+shown in one color) before the surrounding matrix has fractured, while the
+true crack front is tracked with comparatively few false negatives. The overlay is
+generated directly from the committed AR-prediction artifacts (the same
+no-healing binarization used for every reported number), not reconstructed.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.92\linewidth]{fpfn_inclusions_1_2}
+\caption{False-positive / false-negative overlay for the representative
+failure case \texttt{test\_inclusions\_1\_2} at three rollout fractions
+($\sim$25/50/85\%). True positives, false positives (hallucinated cracks on weak
+low-$G_c$ inclusions), and false negatives are color-coded against ground truth.
+Generated from the real v1.0 AR-prediction masks (\texttt{probs.npz}/\texttt{gt.npz})
+under the no-healing protocol.}
+\label{fig:fpfn}
+\end{figure}
 
 \section{Reproducibility}
 \label{sec:repro}
@@ -372,9 +391,10 @@ from-scratch ConvLSTM baseline under an identical AR rollout protocol
 ($0.8621$ vs.\ $0.5767$ late-rollout macro $F_1$; $16/16$ cases;
 Wilcoxon $p{=}\num{1.526e-5}$). A physical-fidelity analysis --- boundary
 localization, crack length/onset, TF--AR error accumulation, calibration, and
-rollout stability --- shows the improvement is physically grounded. Limitations
-include the deferred qualitative FP/FN panels and the workshop-scope baseline
-reproduction (4 BASE / 2 SED). Future work includes displacement-field
+rollout stability, and a qualitative FP/FN failure-mode panel --- shows the
+improvement is physically grounded. The main remaining limitation is the
+workshop-scope baseline reproduction (4 BASE / 2 SED). Future work includes
+displacement-field
 prediction, broader microstructure coverage, and a fuller SOTA positioning study.
 
 \section*{Appendix}
@@ -386,7 +406,7 @@ cases (aggregate ECE $0.0435$).
 
 \begin{figure}[tb]
 \centering
-\includegraphics[width=0.6\linewidth]{reliability.png}
+\includegraphics[width=0.6\linewidth]{reliability}
 \caption{Aggregate reliability diagram over the 16 test cases (ECE $0.0435$),
 binned by predicted probability.}
 \label{fig:reliability}
