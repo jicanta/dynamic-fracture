@@ -273,6 +273,14 @@ headline FractureTAU seeds have \texttt{best.pt} hashes \texttt{0f55814f02ae}
 reference is the frozen \texttt{base\_regen} run. Every number in this section
 traces to the committed per-frame metric CSVs from these runs.
 
+% ===== DROP-IN ANCHOR: Phase 9 (New-Case Generalization) — do not render yet =====
+% \subsection{New-Case Generalization}
+% \label{sec:newcase}
+% Results on the freshly-ingested .e fracture cases + a fresh from-scratch
+% ConvLSTM comparison (NEWC-02..04) land here, under the identical AR-rollout
+% protocol used for the 16 in-distribution cases above.
+% ===== END DROP-IN ANCHOR: Phase 9 =====
+
 \section{Physical-Fidelity Analysis}
 \label{sec:phys}
 
@@ -381,6 +389,15 @@ parameters and \textbf{$\num{2.310e11}$ FLOPs} per forward pass (FLOPs $= 2\time
 MACs), and the headline model trains in \textbf{3.826 A100-hours}. The frozen
 ConvLSTM reference is profiled separately in its own TensorFlow environment, since
 cross-framework FLOP counters are not directly comparable.
+
+% ===== DROP-IN ANCHOR: Phases 10–11 (SED Forecasting) — do not render yet =====
+% \section{SED Forecasting}
+% \label{sec:sed}
+% Continuous strain-energy-density head-to-head (SEDCMP-01..06): regression
+% metrics, error-accumulation curves, and pred|GT|error heatmap panels for
+% FractureTAU-SED vs ConvLSTM-SED under the shared continuous-AR feedback
+% (no-healing deleted for the regression target).
+% ===== END DROP-IN ANCHOR: Phases 10–11 =====
 
 \section{Conclusion}
 \label{sec:conclusion}
