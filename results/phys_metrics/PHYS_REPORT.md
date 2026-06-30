@@ -26,7 +26,7 @@ Late-rollout (last-20%) macro F1, mean +/- std over **3 seeds** headline_s42, he
 | test_inclusions_true_V400 | 0.6584 +/- 0.1839 | 3 |
 | **OVERALL (per-case mean)** | **0.8621** | 3 |
 
-_not yet available: the 16-case from-scratch ConvLSTM reference (`base_regen`) is not present in this checkout (found 0 paired case(s)); the Wilcoxon p is computed in the on-cluster significance run. No p-value is fabricated here (T-05-16)._
+**One-sided Wilcoxon** (TAU > frozen ConvLSTM, n=16): W=136.0, p=1.526e-05, median delta=+0.2285 (D-06, exact small-n).
 
 > **Provenance (DATA-04):** winning `tau_refined/checkpoints/best.pt` sha256 `f1a0786c519b`. Per-seed `best.pt` sha256:
 

@@ -100,7 +100,7 @@ DEFAULT_RUN = "tau_refined"
 DEFAULT_THRESHOLD = 0.5
 # Phase-4 headline seed runs (under NEW_ROOT) + the frozen ConvLSTM regen dir.
 SEED_RUN_NAMES = ("headline_s42", "headline_s43", "headline_s44")
-CNN_REF_REL = "../kathleens-model/OUTPUTS/base_regen"   # 16-case from-scratch regen
+CNN_REF_REL = "kathleens-model/OUTPUTS/base_regen"   # 16-case frozen ConvLSTM regen (relative to REPO_ROOT=dynamic-fracture/)
 NOT_AVAILABLE = "not yet available"
 # D-08: honest from-scratch reproduction scope (corrupt MS206 SED refs excluded).
 REPRO_SCOPE = "4 BASE / 2 SED"
@@ -324,6 +324,7 @@ def _physical_section(
         if case == rep_case:
             out_png = fig_dir / f"length_{case}.png"
             length_over_time_fig(pred, gtb, out_png)
+            length_over_time_fig(pred, gtb, out_png.with_suffix(".pdf"))  # D-06 vector
             rep_png_rel = out_png.relative_to(_abs("results")).as_posix()
     lines.append("")
     if rep_png_rel:
@@ -377,6 +378,7 @@ def _error_accum_section(
             ar_rows = _read_count_rows(ar_csv)
             tf_rows = _read_count_rows(tf_csv)
             f1_vs_horizon_fig(ar_rows, tf_rows, out_png)
+            f1_vs_horizon_fig(ar_rows, tf_rows, out_png.with_suffix(".pdf"))  # D-06 vector
             rep_png_rel = out_png.relative_to(_abs("results")).as_posix()
     lines.append("")
     # PHYS-04 must-have: the figure is emitted from the REAL TF CSV. If the
@@ -393,6 +395,7 @@ def _error_accum_section(
                 tf_rows = _read_count_rows(tf_csv)
                 out_png = fig_dir / f"f1_horizon_{case}.png"
                 f1_vs_horizon_fig(ar_rows, tf_rows, out_png)
+                f1_vs_horizon_fig(ar_rows, tf_rows, out_png.with_suffix(".pdf"))  # D-06 vector
                 rep_png_rel = out_png.relative_to(_abs("results")).as_posix()
                 rep_case = case
                 break
@@ -443,6 +446,7 @@ def _calibration_section(
         cat_g = np.concatenate(all_gts)
         out_png = fig_dir / "reliability.png"
         ece_all, _pop = reliability_fig(cat_p, cat_g, out_png)
+        reliability_fig(cat_p, cat_g, out_png.with_suffix(".pdf"))  # D-06 vector
         rel_rel = out_png.relative_to(_abs("results")).as_posix()
         lines += [
             f"Aggregate ECE over {len(all_probs)} cases: **{ece_all:.4f}**.",
@@ -463,6 +467,8 @@ def _stability_section(
         curves.append(case_f1_curve_from_rows(rows))
     out_png = fig_dir / "stability.png"
     stability_band(curves, out_png, label=f"median F1 ({len(curves)} cases)")
+    stability_band(curves, out_png.with_suffix(".pdf"),
+                   label=f"median F1 ({len(curves)} cases)")  # D-06 vector
     rel = out_png.relative_to(_abs("results")).as_posix()
     return [
         "## 6. Rollout stability",
