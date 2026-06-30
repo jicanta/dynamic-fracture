@@ -39,6 +39,14 @@ from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 
+# ---- vector-PDF font embedding (D-06): Type-42 (TrueType), never Type-3 ----
+# Set once at import so .pdf savefig calls below embed editable/searchable fonts
+# (matplotlib defaults to publisher-rejected Type-3). Does NOT select a backend,
+# so the lazy ``matplotlib.use("Agg")`` inside each plot function still wins.
+import matplotlib as mpl
+mpl.rcParams["pdf.fonttype"] = 42
+mpl.rcParams["ps.fonttype"] = 42
+
 # ---- repo-root sys.path shim ----
 # dashboard -> results -> dynamic-fracture.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -104,7 +112,10 @@ def stability_band(
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=200)
+    if str(out_png).lower().endswith(".pdf"):
+        fig.savefig(out_png, format="pdf")   # vector; dpi only affects raster insets
+    else:
+        fig.savefig(out_png, dpi=200)
     plt.close(fig)
     return grid, med, lo, hi
 
@@ -326,5 +337,8 @@ def save_fpfn_panel(
         ax.set_yticks([])
     fig.tight_layout()
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=200, facecolor="black")
+    if str(out_png).lower().endswith(".pdf"):
+        fig.savefig(out_png, format="pdf", facecolor="black")   # vector, keep dark bg
+    else:
+        fig.savefig(out_png, dpi=200, facecolor="black")
     plt.close(fig)

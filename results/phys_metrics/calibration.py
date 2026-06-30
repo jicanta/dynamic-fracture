@@ -43,6 +43,14 @@ from typing import List, Tuple
 
 import numpy as np
 
+# ---- vector-PDF font embedding (D-06): Type-42 (TrueType), never Type-3 ----
+# Set once at import so the reliability-diagram .pdf savefig embeds editable fonts
+# (matplotlib defaults to publisher-rejected Type-3). Does NOT select a backend,
+# so the lazy ``matplotlib.use("Agg")`` inside ``reliability_diagram`` still wins.
+import matplotlib as mpl
+mpl.rcParams["pdf.fonttype"] = 42
+mpl.rcParams["ps.fonttype"] = 42
+
 # ---- repo-root sys.path shim (S3) ----
 # calibration.py -> phys_metrics -> results -> dynamic-fracture; add results/ so
 # ``dashboard.probs_io`` (the allow_pickle=False seam, S6) imports cleanly.
@@ -144,6 +152,9 @@ def reliability_diagram(
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=200)
+    if str(out_png).lower().endswith(".pdf"):
+        fig.savefig(out_png, format="pdf")   # vector; dpi only affects raster insets
+    else:
+        fig.savefig(out_png, dpi=200)
     plt.close(fig)
     return ece, populations

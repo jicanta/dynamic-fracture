@@ -45,6 +45,15 @@ from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
+# ---- vector-PDF font embedding (D-06): Type-42 (TrueType), never Type-3 ----
+# Set once at import so every .pdf savefig below embeds editable/searchable fonts
+# (publisher format-checkers reject the matplotlib default Type-3). Setting these
+# rcParams does NOT select a backend, so the lazy ``matplotlib.use("Agg")`` calls
+# inside the figure functions still take effect.
+import matplotlib as mpl
+mpl.rcParams["pdf.fonttype"] = 42
+mpl.rcParams["ps.fonttype"] = 42
+
 # ---- repo-root + results sys.path shim (S3) ----
 # figures.py -> phys_metrics -> results -> dynamic-fracture; add results/ so the
 # sibling ``dashboard`` package and the ``phys_metrics`` Wave-2 modules resolve
@@ -127,7 +136,10 @@ def length_over_time_fig(
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=200)
+    if str(out_png).lower().endswith(".pdf"):
+        fig.savefig(out_png, format="pdf")   # vector; dpi only affects raster insets
+    else:
+        fig.savefig(out_png, dpi=200)
     plt.close(fig)
     return pred_curve, gt_curve
 
@@ -173,7 +185,10 @@ def f1_vs_horizon_fig(
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=200)
+    if str(out_png).lower().endswith(".pdf"):
+        fig.savefig(out_png, format="pdf")   # vector; dpi only affects raster insets
+    else:
+        fig.savefig(out_png, dpi=200)
     plt.close(fig)
     return ar_curve, tf_curve, gap
 
