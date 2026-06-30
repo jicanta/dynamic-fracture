@@ -235,8 +235,8 @@ Table~\ref{tab:ablation} summarizes the input-channel ablation that motivates th
 \texttt{extra=none} (BASE) headline configuration. Adding a stress-derived channel
 (von Mises or strain-energy density, SED) \emph{lowered} overall macro $F_1$ in
 the breadth runs, so the headline model uses no extra physics channel. The full
-five-row leave-one-out ablation and extended significance tables are deferred to
-the appendix (Sec.~\ref{sec:appendix}).
+leave-one-out input-channel ablation and extended per-seed significance tables are
+deferred to the appendix (Sec.~\ref{sec:appendix}).
 
 \begin{table}[t]
 \centering
@@ -429,10 +429,88 @@ binned by predicted probability.}
 \label{fig:reliability}
 \end{figure}
 
-\paragraph{Extended tables.}
-The full five-row leave-one-out input ablation and the extended per-seed
-significance tables are maintained alongside the measured artifacts and will be
-folded into a longer version of this paper.
+\paragraph{Extended input-channel ablation (leave-one-out).}
+Table~\ref{tab:ablation-full} gives the full leave-one-out ablation over the
+optional stress channel, expanding the compact body table
+(Table~\ref{tab:ablation}). We report two complementary \emph{measured}
+quantities per configuration: the Phase-4 breadth-run overall macro $F_1$ (the
+metric on the same footing as the headline result) and the canonical
+full-continuous-rollout AR micro $F_1$ (tp/fp/fn summed over every frame at a
+fixed $0.5$ threshold, before the tuned two-stage recipe and calibrated
+threshold of the headline model). A dash marks a configuration that was not run
+under that specific protocol: von~Mises was not given a dedicated new-model AR
+rollout (it degrades accuracy and is not tied to the phase-field damage driver),
+and the breadth macro $F_1$ was not logged for the pressure and SED channels.
+Every entry is transcribed verbatim from a committed artifact (see
+Table~\ref{tab:provenance}); none is recomputed or interpolated.
+
+\begin{table}[hb]
+\centering
+\caption{Full input-channel leave-one-out ablation. Breadth macro $F_1$ is from
+the Phase-4 breadth runs (\texttt{results/findings/inclusion\_false\_positives.md});
+full-rollout AR micro $F_1$ is from the per-mode evaluations
+(\texttt{new\_model/OUTPUTS/tau\_\{base,pressure,sed\}/RESULTS.md}). The
+\texttt{extra=none} BASE configuration is the headline choice; stress-derived
+channels lower the overall macro $F_1$.}
+\label{tab:ablation-full}
+\small
+\begin{tabular}{lcc}
+\toprule
+Input configuration & Breadth macro $F_1$ & Full-rollout AR micro $F_1$ \\
+\midrule
+\texttt{extra=none} (BASE, headline) & \textbf{0.86} & 0.5644 \\
+$+$ pressure                         & ---           & 0.6763 \\
+$+$ von Mises stress                 & 0.75          & ---    \\
+$+$ strain-energy density (SED)      & 0.58          & 0.2527 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Extended per-seed significance.}
+Table~\ref{tab:perseed} reports the per-case late-rollout (last-20\%) macro
+$F_1$ as mean$\pm$std over the three headline seeds (42/43/44), transcribed from
+\texttt{new\_model/OUTPUTS/seed\_meanstd.csv}. The per-case mean is $0.8621$,
+matching the headline of Table~\ref{tab:headline}. The one-sided Wilcoxon
+signed-rank test of the per-case FractureTAU$-$ConvLSTM deltas
+(\texttt{results/comparisons/tau\_headline\_vs\_base\_regen.md}) is exact with
+$n{=}16$, all-nonzero: $W{=}136.0$, $p{=}\num{1.526e-5}$, median
+$\Delta{=}{+}0.2285$. The spread is the honest run-to-run variation (bf16 AMP
+$+$ cuDNN are not byte-deterministic); we never claim bit-determinism.
+
+\begin{table}[hb]
+\centering
+\caption{Extended per-seed table: per-case late-rollout (last-20\%) macro $F_1$,
+mean$\pm$std over seeds 42/43/44 (source:
+\texttt{new\_model/OUTPUTS/seed\_meanstd.csv}). Overall row is the per-case mean.
+Headline significance: one-sided Wilcoxon $W{=}136.0$, $p{=}\num{1.526e-5}$,
+$n{=}16$.}
+\label{tab:perseed}
+\small
+\begin{tabular}{lc}
+\toprule
+Case & Late-rollout macro $F_1$ (mean$\pm$std, 3 seeds) \\
+\midrule
+test\_MS206\_V100            & $0.9506 \pm 0.0186$ \\
+test\_MS206\_V1000           & $0.9674 \pm 0.0074$ \\
+test\_MS206\_V200            & $0.9483 \pm 0.0038$ \\
+test\_MS206\_V400            & $0.9569 \pm 0.0102$ \\
+test\_MS210\_V400            & $0.9321 \pm 0.0019$ \\
+test\_MS5\_V150ms\_inc       & $0.5971 \pm 0.3230$ \\
+test\_MS5\_V400ms            & $0.9305 \pm 0.0332$ \\
+test\_PBX1\_V400\_true       & $0.7240 \pm 0.1292$ \\
+test\_PBX\_2\_V400           & $0.7841 \pm 0.0680$ \\
+test\_emergency\_horizontal  & $0.8589 \pm 0.0186$ \\
+test\_horizontal\_layers\_3  & $0.9390 \pm 0.0102$ \\
+test\_horizontal\_layers\_4  & $0.9359 \pm 0.0167$ \\
+test\_inclusions\_1\_2       & $0.8520 \pm 0.0180$ \\
+test\_inclusions\_2\_2       & $0.9344 \pm 0.0258$ \\
+test\_inclusions\_3\_2       & $0.8234 \pm 0.0715$ \\
+test\_inclusions\_true\_V400 & $0.6584 \pm 0.1839$ \\
+\midrule
+\textbf{Overall (per-case mean)} & $\mathbf{0.8621}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section*{Acknowledgments}
 This work was carried out under the Summer Undergraduate Research Fellowship
