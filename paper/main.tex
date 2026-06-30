@@ -512,6 +512,54 @@ test\_inclusions\_true\_V400 & $0.6584 \pm 0.1839$ \\
 \end{tabular}
 \end{table}
 
+\paragraph{Provenance and reproducibility table.}
+Table~\ref{tab:provenance} is the full number$\rightarrow$source audit: every
+quantitative claim in the body maps to a committed first-party artifact (cited by
+its \emph{relative} repository path) and a SHA-12 prefix of that artifact's
+SHA-256, plus the SHA-12 of each trained checkpoint. The file SHA-12s are computed
+at build time with \texttt{sha256sum} over the committed source files. No cluster,
+storage, or user path appears anywhere in this manuscript; the absolute baseline
+path that appears in the comparison artifact's significance block is deliberately
+\emph{not} transcribed here. The from-scratch ConvLSTM reproduction remains at the
+honest \textbf{4 BASE / 2 SED} scope reported in
+Sec.~\ref{sec:repro-baseline}---neither broadened nor overstated.
+
+\noindent Source artifacts (relative repository paths; file SHA-12 prefixes):
+\begin{description}
+  \setlength{\itemsep}{0pt}
+  \item[A1] \nolinkurl{results/comparisons/tau_headline_vs_base_regen.md}\quad(\texttt{425a4aa98601})
+  \item[A2] \nolinkurl{new_model/OUTPUTS/seed_meanstd.csv}\quad(\texttt{6617a712844a})
+  \item[A3] \nolinkurl{results/phys_metrics/PHYS_REPORT.md}\quad(\texttt{0c76b30cc8b8})
+\end{description}
+
+\begin{table}[hb]
+\centering
+\caption{Provenance / reproducibility audit. Each reported body number maps to a
+committed source artifact (A1--A3 above, by relative repo path + file SHA-12) or,
+for the checkpoints, to the per-seed \texttt{best.pt} SHA-12.}
+\label{tab:provenance}
+\small
+\begin{tabular}{lll}
+\toprule
+Reported quantity & Value & Source / SHA-12 \\
+\midrule
+Headline FractureTAU macro $F_1$ & $0.8621$ & A1 \\
+Headline ConvLSTM macro $F_1$    & $0.5767$ & A1 \\
+Wilcoxon $p$ ($W{=}136.0$, $n{=}16$) & $\num{1.526e-5}$ & A1 \\
+Per-case 3-seed mean$\pm$std (Tab.~\ref{tab:perseed}) & see Tab.~\ref{tab:perseed} & A2 \\
+Macro HD95 & $39.585$ px & A3 \\
+Macro boundary-$F_1$ & $0.6258$ & A3 \\
+Aggregate ECE & $0.0435$ & A3 \\
+Params / FLOPs / A100-h & $\num{10323201}$ / $\num{2.310e11}$ / $3.826$ & A3 \\
+\midrule
+FractureTAU \texttt{best.pt} (seed 42) & checkpoint & \texttt{0f55814f02ae} \\
+FractureTAU \texttt{best.pt} (seed 43) & checkpoint & \texttt{6a09694abf51} \\
+FractureTAU \texttt{best.pt} (seed 44) & checkpoint & \texttt{f97f429e8d9f} \\
+FractureTAU \texttt{best.pt} (tuned, tau\_refined) & checkpoint & \texttt{f1a0786c519b} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \section*{Acknowledgments}
 This work was carried out under the Summer Undergraduate Research Fellowship
 (SURF) program at Purdue University. We thank our mentors Kyle Jung and Joshua
