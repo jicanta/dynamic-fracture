@@ -78,17 +78,30 @@ def _verify_archive(archive: Path, *, no_checkpoints: bool) -> None:
 
     files = manifest.get("files", [])
     for entry in files:
-        fpath = archive / entry["path"]
+        # A tampered/truncated manifest (e.g. an entry with its `sha256` field
+        # dropped to skip that file's check) is itself a fail-loud condition —
+        # surface it as the standard ARCHIVE PROVENANCE FAIL instead of a bare
+        # KeyError/TypeError traceback (WR-03), consistent with the JSON-decode
+        # handling above.
+        try:
+            rel, want = entry["path"], entry["sha256"]
+        except (KeyError, TypeError):
+            raise SystemExit(
+                f"ARCHIVE PROVENANCE FAIL: malformed manifest entry {entry!r} in "
+                f"{manifest_path} (missing 'path'/'sha256') — the manifest has been "
+                f"TAMPERED (T-08-01). Do not rely on this archive."
+            )
+        fpath = archive / rel
         if not fpath.is_file():
             raise SystemExit(
-                f"ARCHIVE PROVENANCE FAIL: bundled file {entry['path']} is MISSING under "
+                f"ARCHIVE PROVENANCE FAIL: bundled file {rel} is MISSING under "
                 f"{archive} — the archive has been mutated (T-08-01)."
             )
         digest = _sha256(fpath)
-        if digest != entry["sha256"]:
+        if digest != want:
             raise SystemExit(
-                f"ARCHIVE PROVENANCE FAIL: {entry['path']} sha256={digest[:16]}… does NOT "
-                f"match recorded {entry['sha256'][:16]}… — the file has been TAMPERED "
+                f"ARCHIVE PROVENANCE FAIL: {rel} sha256={digest[:16]}… does NOT "
+                f"match recorded {want[:16]}… — the file has been TAMPERED "
                 f"(T-08-01). Do not rely on this archive."
             )
     print(f"ARCHIVE PROVENANCE: {len(files)} bundled files OK")
@@ -102,19 +115,30 @@ def _verify_archive(archive: Path, *, no_checkpoints: bool) -> None:
         )
     else:
         for c in ckpts:
-            durable_path = Path(c["durable_path"])
+            # Same fail-loud treatment for a malformed durable-checkpoint entry
+            # (WR-03): a dropped 'durable_path'/'sha256'/'name' field must not
+            # crash with a bare KeyError — it is a tampered manifest.
+            try:
+                name, durable_path_str, want = c["name"], c["durable_path"], c["sha256"]
+            except (KeyError, TypeError):
+                raise SystemExit(
+                    f"ARCHIVE PROVENANCE FAIL: malformed durable-checkpoint entry {c!r} in "
+                    f"{manifest_path} (missing 'name'/'durable_path'/'sha256') — the manifest "
+                    f"has been TAMPERED (T-08-01). Do not rely on this archive."
+                )
+            durable_path = Path(durable_path_str)
             if not durable_path.is_file():
                 raise SystemExit(
-                    f"ARCHIVE PROVENANCE FAIL: durable checkpoint '{c['name']}' is "
+                    f"ARCHIVE PROVENANCE FAIL: durable checkpoint '{name}' is "
                     f"MISSING/unreachable at {durable_path} (D-08: missing/changed durable "
                     f"checkpoint = FAIL). The durable-checkpoint verify must run where the "
                     f"durable store is reachable (Gilbreth); off-cluster use --no-checkpoints."
                 )
             digest = _sha256(durable_path)
-            if digest != c["sha256"]:
+            if digest != want:
                 raise SystemExit(
-                    f"ARCHIVE PROVENANCE FAIL: durable checkpoint '{c['name']}' "
-                    f"sha256={digest[:16]}… does NOT match recorded {c['sha256'][:16]}… at "
+                    f"ARCHIVE PROVENANCE FAIL: durable checkpoint '{name}' "
+                    f"sha256={digest[:16]}… does NOT match recorded {want[:16]}… at "
                     f"{durable_path} — the durable checkpoint has DRIFTED (D-08)."
                 )
             n_ckpts += 1
