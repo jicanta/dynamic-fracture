@@ -18,7 +18,8 @@
 #     bash scripts/repro_eval.sh --run-name foo  # regen a different run
 #     bash scripts/repro_eval.sh --skip-eval     # reuse existing eval outputs, just rebuild reports
 #     bash scripts/repro_eval.sh --smoke         # dry-run the wiring (no heavy compute, no GPU/artifacts)
-#     bash scripts/repro_eval.sh --from-outputs  # zero-scratch, no-GPU, no-checkpoint regen from archive/v1.0/outputs into archive/v1.0/
+#     bash scripts/repro_eval.sh --from-outputs        # zero-scratch, no-GPU, no-checkpoint regen from archive/v1.0/outputs into archive/repro-out/ (NON-destructive; bundled archive is read-only)
+#     bash scripts/repro_eval.sh --from-outputs DEST   # same, writing the regenerated artifacts under DEST instead of the default archive/repro-out/
 #
 # SECURITY (T-05-18): all paths are derived from the repo root below. This script
 # MUST NOT contain absolute cluster/user-scratch paths or credentials.
@@ -31,9 +32,19 @@ NEW_MODEL_DIR="$REPO_ROOT/new_model"
 DASHBOARD_DRIVER="$REPO_ROOT/results/dashboard/make_report.py"
 PHYS_DRIVER="$REPO_ROOT/results/phys_metrics/make_phys_report.py"
 FPFN_DRIVER="$REPO_ROOT/results/findings/make_fpfn_panel.py"
-# Self-contained v1.0 archive (bundled outputs; zero-scratch light-repro target).
+# Self-contained v1.0 archive (bundled outputs; zero-scratch light-repro SOURCE).
+# The archive tree is READ-ONLY input to --from-outputs: every path under
+# archive/v1.0/ is sha256-tamper-checked by manifest.json (assert_provenance.py
+# --archive), and matplotlib PDFs are non-deterministic, so regenerating IN PLACE
+# would make the archive fail its own provenance check (CR-01). --from-outputs
+# therefore writes every regenerated artifact into a SEPARATE scratch dir OUTSIDE
+# the hashed tree (default archive/repro-out/, overridable), never back into
+# archive/v1.0/.
 ARCHIVE_DIR="$REPO_ROOT/archive/v1.0"
 ARCHIVE_OUTPUTS="$ARCHIVE_DIR/outputs"
+# Default non-destructive light-repro output dir (sibling of v1.0, NOT under the
+# manifest-hashed tree, so it can never trip assert_provenance.py --archive).
+REPRO_OUT_DIR="$REPO_ROOT/archive/repro-out"
 
 # Python interpreter: override with `PYTHON=... bash scripts/repro_eval.sh` (e.g.
 # `uv run` envs export their own `python`). Defaults to `python`.
@@ -61,7 +72,16 @@ while [[ $# -gt 0 ]]; do
     --skip-eval)
       SKIP_EVAL=1; shift ;;
     --from-outputs)
-      FROM_OUTPUTS=1; shift ;;
+      FROM_OUTPUTS=1
+      # Optional inline destination: consume the next token as DEST unless it is
+      # another flag (leading '-') or absent. Keeps the bare flag working.
+      if [[ $# -ge 2 && "$2" != -* ]]; then
+        REPRO_OUT_DIR="$2"; shift 2
+      else
+        shift
+      fi ;;
+    --from-outputs=*)
+      FROM_OUTPUTS=1; REPRO_OUT_DIR="${1#*=}"; shift ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -129,53 +149,69 @@ fi
 # --from-outputs: zero-scratch, no-GPU, no-checkpoint LIGHT repro (D-03/D-05).
 # Skips src.evaluate entirely (no Slurm, no checkpoint load) and rebuilds the
 # headline seed table + comparison dashboard + physical-metrics report + FP/FN
-# panel straight from the bundled archive/v1.0/outputs tree, writing EVERY
-# regenerated artifact back INTO archive/v1.0/ — never the source results/ or
-# paper/ tree (threat T-08-09 / W5). The ConvLSTM reference resolves via the
-# bundled convlstm_ref/BASE/<case>/ layout (--old-root + --ref-mode BASE).
+# panel straight from the bundled archive/v1.0/outputs tree.
+#
+# NON-DESTRUCTIVE (CR-01): the archive tree (archive/v1.0/) is READ-ONLY input.
+# Every path under it is sha256-tamper-checked by manifest.json, and matplotlib
+# PDFs are non-deterministic, so regenerating in place would make the archive
+# fail its own `assert_provenance.py --archive` check. All regenerated artifacts
+# are therefore written into REPRO_OUT_DIR (default archive/repro-out/, outside
+# the hashed tree; override via `--from-outputs DEST`) — never back into
+# archive/v1.0/, and never the source results/ or paper/ tree (threat T-08-09 /
+# W5). The ConvLSTM reference resolves via the bundled convlstm_ref/BASE/<case>/
+# layout (--old-root + --ref-mode BASE).
 # ---------------------------------------------------------------------------
 if [[ "$FROM_OUTPUTS" == "1" ]]; then
+  # Resolve REPRO_OUT_DIR to an absolute path (relative DEST -> relative to CWD).
+  mkdir -p "$REPRO_OUT_DIR"
+  REPRO_OUT_DIR="$(cd "$REPRO_OUT_DIR" && pwd)"
+  REPRO_OUTPUTS="$REPRO_OUT_DIR/outputs"
+  REPRO_FIGS="$REPRO_OUT_DIR/figures"
+  REPRO_DIAG="$REPRO_OUT_DIR/diagnostics"
+  mkdir -p "$REPRO_OUTPUTS" "$REPRO_FIGS" "$REPRO_DIAG"
+
   echo "[repro] --from-outputs: zero-scratch, no-GPU, no-checkpoint regen"
   echo "[repro] repo root:      $REPO_ROOT"
-  echo "[repro] bundled tree:   $ARCHIVE_OUTPUTS"
-  echo "[repro] writing into:   $ARCHIVE_DIR"
+  echo "[repro] bundled tree:   $ARCHIVE_OUTPUTS (READ-ONLY, tamper-checked)"
+  echo "[repro] writing into:   $REPRO_OUT_DIR (outside the hashed archive tree)"
 
-  SEED_CMD="(cd '$NEW_MODEL_DIR' && '$PYTHON' -m scripts.seed_aggregate --runs '$ARCHIVE_OUTPUTS' --out '$ARCHIVE_OUTPUTS/seed_meanstd.csv' --no-checkpoints)"
-  DASH_CMD="'$PYTHON' '$DASHBOARD_DRIVER' --run-name tau_refined --new-root '$ARCHIVE_OUTPUTS' --old-root '$ARCHIVE_OUTPUTS/convlstm_ref' --ref-mode BASE --report '$ARCHIVE_DIR/REPORT.md' --figures '$ARCHIVE_DIR/figures' --diagnostics '$ARCHIVE_DIR/diagnostics'"
-  FPFN_CMD="'$PYTHON' '$FPFN_DRIVER' --case-dir '$ARCHIVE_OUTPUTS/headline_s42/eval/test_inclusions_1_2' --out '$ARCHIVE_DIR/figures/fpfn_inclusions_1_2.pdf'"
-  PHYS_CMD2="'$PYTHON' '$PHYS_DRIVER' --run-name tau_refined --new-root '$ARCHIVE_OUTPUTS' --report '$ARCHIVE_DIR/PHYS_REPORT.md' --figures '$ARCHIVE_DIR/figures'"
+  SEED_CMD="(cd '$NEW_MODEL_DIR' && '$PYTHON' -m scripts.seed_aggregate --runs '$ARCHIVE_OUTPUTS' --out '$REPRO_OUTPUTS/seed_meanstd.csv' --no-checkpoints)"
+  DASH_CMD="'$PYTHON' '$DASHBOARD_DRIVER' --run-name tau_refined --new-root '$ARCHIVE_OUTPUTS' --old-root '$ARCHIVE_OUTPUTS/convlstm_ref' --ref-mode BASE --report '$REPRO_OUT_DIR/REPORT.md' --figures '$REPRO_FIGS' --diagnostics '$REPRO_DIAG'"
+  FPFN_CMD="'$PYTHON' '$FPFN_DRIVER' --case-dir '$ARCHIVE_OUTPUTS/headline_s42/eval/test_inclusions_1_2' --out '$REPRO_FIGS/fpfn_inclusions_1_2.pdf'"
+  PHYS_CMD2="'$PYTHON' '$PHYS_DRIVER' --run-name tau_refined --new-root '$ARCHIVE_OUTPUTS' --report '$REPRO_OUT_DIR/PHYS_REPORT.md' --figures '$REPRO_FIGS'"
 
   echo "[repro] step 1/4: seed mean±std table (no checkpoint load)"
   echo "[repro]   + $SEED_CMD"
   ( cd "$NEW_MODEL_DIR" && "$PYTHON" -m scripts.seed_aggregate \
-      --runs "$ARCHIVE_OUTPUTS" --out "$ARCHIVE_OUTPUTS/seed_meanstd.csv" --no-checkpoints )
+      --runs "$ARCHIVE_OUTPUTS" --out "$REPRO_OUTPUTS/seed_meanstd.csv" --no-checkpoints )
 
   echo "[repro] step 2/4: multi-metric dashboard (ConvLSTM ref via BASE/)"
   echo "[repro]   + $DASH_CMD"
   "$PYTHON" "$DASHBOARD_DRIVER" --run-name tau_refined \
     --new-root "$ARCHIVE_OUTPUTS" \
     --old-root "$ARCHIVE_OUTPUTS/convlstm_ref" --ref-mode BASE \
-    --report "$ARCHIVE_DIR/REPORT.md" --figures "$ARCHIVE_DIR/figures" \
-    --diagnostics "$ARCHIVE_DIR/diagnostics"
+    --report "$REPRO_OUT_DIR/REPORT.md" --figures "$REPRO_FIGS" \
+    --diagnostics "$REPRO_DIAG"
 
   echo "[repro] step 3/4: FP/FN qualitative panel"
   echo "[repro]   + $FPFN_CMD"
   "$PYTHON" "$FPFN_DRIVER" \
     --case-dir "$ARCHIVE_OUTPUTS/headline_s42/eval/test_inclusions_1_2" \
-    --out "$ARCHIVE_DIR/figures/fpfn_inclusions_1_2.pdf"
+    --out "$REPRO_FIGS/fpfn_inclusions_1_2.pdf"
 
   echo "[repro] step 4/4: physical-metrics report"
   echo "[repro]   + $PHYS_CMD2"
   "$PYTHON" "$PHYS_DRIVER" --run-name tau_refined --new-root "$ARCHIVE_OUTPUTS" \
-    --report "$ARCHIVE_DIR/PHYS_REPORT.md" --figures "$ARCHIVE_DIR/figures"
+    --report "$REPRO_OUT_DIR/PHYS_REPORT.md" --figures "$REPRO_FIGS"
 
   echo
-  echo "[repro] --from-outputs done. Regenerated (all under archive/v1.0/):"
-  echo "  cat archive/v1.0/REPORT.md              # headline + multi-metric dashboard (with ConvLSTM ref)"
-  echo "  cat archive/v1.0/PHYS_REPORT.md         # PHYS-01..06 physical-metrics report"
-  echo "  ls  archive/v1.0/figures/               # dashboard + physical + FP/FN figures"
-  echo "  cat archive/v1.0/outputs/seed_meanstd.csv"
+  echo "[repro] --from-outputs done. Regenerated (all under $REPRO_OUT_DIR/):"
+  echo "  cat '$REPRO_OUT_DIR/REPORT.md'          # headline + multi-metric dashboard (with ConvLSTM ref)"
+  echo "  cat '$REPRO_OUT_DIR/PHYS_REPORT.md'     # PHYS-01..06 physical-metrics report"
+  echo "  ls  '$REPRO_FIGS/'                       # dashboard + physical + FP/FN figures"
+  echo "  cat '$REPRO_OUTPUTS/seed_meanstd.csv'"
   echo "Zero scratch, no GPU, no checkpoint load — self-contained from the bundled outputs."
+  echo "The bundled archive/v1.0/ tree is left BYTE-UNCHANGED (verify: scripts/assert_provenance.py --archive)."
   exit 0
 fi
 

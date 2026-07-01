@@ -7,3 +7,8 @@ __pycache__/
 # uv-managed analysis virtualenv (PAPER-03 env); the pinned uv.lock is the
 # committed reproducibility anchor, the materialized .venv is not.
 .venv/
+
+# Non-destructive light-repro output (CR-01): `repro_eval.sh --from-outputs`
+# regenerates the headline artifacts here (default; outside the sha256-tracked
+# archive/v1.0/ tree) so it never tampers the bundled archive. Scratch, not committed.
+archive/repro-out/
