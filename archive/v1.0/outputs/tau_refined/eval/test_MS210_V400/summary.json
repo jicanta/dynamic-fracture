@@ -1,0 +1,19 @@
+{
+  "case": "test_MS210_V400",
+  "run_folder": "F_MS210_V400_out",
+  "n_frames_evaluated": 265,
+  "precision": 0.9435696887081275,
+  "recall": 0.45478613404104984,
+  "f1": 0.6137528144764021,
+  "accuracy": 0.980597738010356,
+  "mean_bce": 0.18793696465135235,
+  "tp": 211119,
+  "tn": 13218623,
+  "fp": 12626,
+  "fn": 253097,
+  "elapsed_s": 6.540281295776367,
+  "threshold": 0.7250000000000001,
+  "enforce_no_healing": true,
+  "seed": 42,
+  "checkpoint_sha256": "f1a0786c519b9052e5866e0517f041e4d84177da38e72671f3f5f28d33a24a0c"
+}

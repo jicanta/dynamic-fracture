@@ -1,0 +1,19 @@
+{
+  "case": "test_inclusions_3_2",
+  "run_folder": "V400_F_inclusions_3_2_out",
+  "n_frames_evaluated": 353,
+  "precision": 0.8706628390205068,
+  "recall": 0.9288006151625137,
+  "f1": 0.8987925579722706,
+  "accuracy": 0.9785881387305531,
+  "mean_bce": 0.10227875222923873,
+  "tp": 1734511,
+  "tn": 16118257,
+  "fp": 257662,
+  "fn": 132963,
+  "elapsed_s": 8.505374431610107,
+  "threshold": 0.2,
+  "enforce_no_healing": true,
+  "seed": 43,
+  "checkpoint_sha256": "6a09694abf51408c40d04450294bce4a3f3aca65dc80aaab405dad613df7fd85"
+}

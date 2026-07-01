@@ -1,0 +1,19 @@
+{
+  "case": "test_emergency_horizontal",
+  "run_folder": "F_emergency_horizontal_out_V400",
+  "n_frames_evaluated": 265,
+  "precision": 0.9713534707680049,
+  "recall": 0.6611614797862965,
+  "f1": 0.7867878917868046,
+  "accuracy": 0.9841765869212911,
+  "mean_bce": 0.15494648460220015,
+  "tp": 399846,
+  "tn": 13078910,
+  "fp": 11792,
+  "fn": 204917,
+  "elapsed_s": 6.669212341308594,
+  "threshold": 0.7250000000000001,
+  "enforce_no_healing": true,
+  "seed": 42,
+  "checkpoint_sha256": "f1a0786c519b9052e5866e0517f041e4d84177da38e72671f3f5f28d33a24a0c"
+}

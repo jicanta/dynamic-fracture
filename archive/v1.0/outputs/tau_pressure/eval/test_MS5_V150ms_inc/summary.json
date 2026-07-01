@@ -1,0 +1,17 @@
+{
+  "case": "test_MS5_V150ms_inc",
+  "run_folder": "F_MS206_V150_out",
+  "n_frames_evaluated": 288,
+  "precision": 0.0,
+  "recall": 0.0,
+  "f1": 0.0,
+  "accuracy": 0.9989865714672703,
+  "mean_bce": 0.009939219852881424,
+  "tp": 0,
+  "tn": 14869044,
+  "fp": 0,
+  "fn": 15084,
+  "elapsed_s": 6.272341012954712,
+  "threshold": 0.5,
+  "enforce_no_healing": true
+}

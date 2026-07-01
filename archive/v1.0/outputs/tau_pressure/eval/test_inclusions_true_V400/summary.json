@@ -1,0 +1,17 @@
+{
+  "case": "test_inclusions_true_V400",
+  "run_folder": "F_inclusions_true_V400",
+  "n_frames_evaluated": 217,
+  "precision": 0.9902553932151763,
+  "recall": 0.7387482715459792,
+  "f1": 0.8462092649501141,
+  "accuracy": 0.9923291385999026,
+  "mean_bce": 0.08751604911634919,
+  "tp": 236675,
+  "tn": 10892075,
+  "fp": 2329,
+  "fn": 83698,
+  "elapsed_s": 4.889206171035767,
+  "threshold": 0.5,
+  "enforce_no_healing": true
+}

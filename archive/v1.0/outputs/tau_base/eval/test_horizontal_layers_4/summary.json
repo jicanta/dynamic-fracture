@@ -1,0 +1,17 @@
+{
+  "case": "test_horizontal_layers_4",
+  "run_folder": "V400_F_horizontal-layers_4_out",
+  "n_frames_evaluated": 363,
+  "precision": 0.9520366483876064,
+  "recall": 0.3105783756246521,
+  "f1": 0.4683644502371931,
+  "accuracy": 0.974474316722479,
+  "mean_bce": 0.20042843471067517,
+  "tp": 210938,
+  "tn": 18070398,
+  "fp": 10627,
+  "fn": 468240,
+  "elapsed_s": 6.734479904174805,
+  "threshold": 0.5,
+  "enforce_no_healing": true
+}

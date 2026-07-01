@@ -1,0 +1,17 @@
+case,late_rollout_f1_mean,late_rollout_f1_std,n_seeds
+test_MS206_V100,0.950604,0.018648,3
+test_MS206_V1000,0.967442,0.007373,3
+test_MS206_V200,0.948328,0.003783,3
+test_MS206_V400,0.956941,0.010241,3
+test_MS210_V400,0.932115,0.001932,3
+test_MS5_V150ms_inc,0.597109,0.322978,3
+test_MS5_V400ms,0.930544,0.033196,3
+test_PBX1_V400_true,0.723968,0.129239,3
+test_PBX_2_V400,0.784107,0.068050,3
+test_emergency_horizontal,0.858908,0.018590,3
+test_horizontal_layers_3,0.938960,0.010164,3
+test_horizontal_layers_4,0.935875,0.016732,3
+test_inclusions_1_2,0.851979,0.018013,3
+test_inclusions_2_2,0.934372,0.025786,3
+test_inclusions_3_2,0.823407,0.071458,3
+test_inclusions_true_V400,0.658379,0.183864,3

@@ -1,0 +1,17 @@
+{
+  "case": "test_MS210_V400",
+  "run_folder": "F_MS210_V400_out",
+  "n_frames_evaluated": 265,
+  "precision": 0.977231800427184,
+  "recall": 0.8919511606665862,
+  "f1": 0.9326460349513076,
+  "accuracy": 0.9956332260350416,
+  "mean_bce": 0.0445061223527801,
+  "tp": 414058,
+  "tn": 13221602,
+  "fp": 9647,
+  "fn": 50158,
+  "elapsed_s": 5.43718695640564,
+  "threshold": 0.5,
+  "enforce_no_healing": true
+}

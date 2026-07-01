@@ -1,0 +1,19 @@
+{
+  "case": "test_MS206_V400",
+  "run_folder": "F_MS206_V400_out",
+  "n_frames_evaluated": 265,
+  "precision": 0.9899798620857997,
+  "recall": 0.8429530480327562,
+  "f1": 0.9105696532911243,
+  "accuracy": 0.9965098665872243,
+  "mean_bce": 0.0311564271191557,
+  "tp": 243342,
+  "tn": 13404324,
+  "fp": 2463,
+  "fn": 45336,
+  "elapsed_s": 6.409482479095459,
+  "threshold": 0.7250000000000001,
+  "enforce_no_healing": true,
+  "seed": 42,
+  "checkpoint_sha256": "f1a0786c519b9052e5866e0517f041e4d84177da38e72671f3f5f28d33a24a0c"
+}

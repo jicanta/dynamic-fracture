@@ -1,0 +1,17 @@
+{
+  "case": "test_emergency_horizontal",
+  "run_folder": "F_emergency_horizontal_out_V400",
+  "n_frames_evaluated": 265,
+  "precision": 0.9781931301574709,
+  "recall": 0.6197899011678956,
+  "f1": 0.7587993258734039,
+  "accuracy": 0.9826005907795026,
+  "mean_bce": 0.2014038458078492,
+  "tp": 374826,
+  "tn": 13082346,
+  "fp": 8356,
+  "fn": 229937,
+  "elapsed_s": 6.495073080062866,
+  "threshold": 0.5,
+  "enforce_no_healing": true
+}

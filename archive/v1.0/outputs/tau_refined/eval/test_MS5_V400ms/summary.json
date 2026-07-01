@@ -1,0 +1,19 @@
+{
+  "case": "test_MS5_V400ms",
+  "run_folder": "F_MS206_V400_MS5",
+  "n_frames_evaluated": 265,
+  "precision": 0.9929195266002326,
+  "recall": 0.8132084310591429,
+  "f1": 0.8941232839792431,
+  "accuracy": 0.9909645273088573,
+  "mean_bce": 0.09290326055681694,
+  "tp": 522510,
+  "tn": 13049210,
+  "fp": 3726,
+  "fn": 120019,
+  "elapsed_s": 7.897919178009033,
+  "threshold": 0.7250000000000001,
+  "enforce_no_healing": true,
+  "seed": 42,
+  "checkpoint_sha256": "f1a0786c519b9052e5866e0517f041e4d84177da38e72671f3f5f28d33a24a0c"
+}

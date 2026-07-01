@@ -1,0 +1,17 @@
+{
+  "case": "test_MS206_V400",
+  "run_folder": "F_MS206_V400_out",
+  "n_frames_evaluated": 265,
+  "precision": 0.9804855738079811,
+  "recall": 0.9802444245837924,
+  "f1": 0.9803649843664741,
+  "accuracy": 0.9991723537681999,
+  "mean_bce": 0.007279384715363067,
+  "tp": 282975,
+  "tn": 13401155,
+  "fp": 5632,
+  "fn": 5703,
+  "elapsed_s": 4.721961975097656,
+  "threshold": 0.5,
+  "enforce_no_healing": true
+}

@@ -1,0 +1,17 @@
+{
+  "case": "test_PBX1_V400_true",
+  "run_folder": "F_PBX1_V400_true",
+  "n_frames_evaluated": 183,
+  "precision": 0.8947586906720376,
+  "recall": 0.20220951666171533,
+  "f1": 0.3298704942587536,
+  "accuracy": 0.9499981126335867,
+  "mean_bce": 0.47456705892083173,
+  "tp": 116392,
+  "tn": 8868332,
+  "fp": 13690,
+  "fn": 459209,
+  "elapsed_s": 3.6871838569641113,
+  "threshold": 0.5,
+  "enforce_no_healing": true
+}

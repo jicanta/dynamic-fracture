@@ -1,0 +1,19 @@
+{
+  "case": "test_horizontal_layers_3",
+  "run_folder": "V400_F_horizontal-layers_3_out",
+  "n_frames_evaluated": 353,
+  "precision": 0.892226917226625,
+  "recall": 0.984652788330041,
+  "f1": 0.9361641231127784,
+  "accuracy": 0.9948652643726965,
+  "mean_bce": 0.04532133320213395,
+  "tp": 686880,
+  "tn": 17462838,
+  "fp": 82969,
+  "fn": 10706,
+  "elapsed_s": 8.707458734512329,
+  "threshold": 0.2,
+  "enforce_no_healing": true,
+  "seed": 44,
+  "checkpoint_sha256": "f97f429e8d9f19ecb26d7b68b55e5412bc8b6a9c88d1bc96cc690a02a8270553"
+}
