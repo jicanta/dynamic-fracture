@@ -177,7 +177,6 @@ if [[ "$FROM_OUTPUTS" == "1" ]]; then
 
   SEED_CMD="(cd '$NEW_MODEL_DIR' && '$PYTHON' -m scripts.seed_aggregate --runs '$ARCHIVE_OUTPUTS' --out '$REPRO_OUTPUTS/seed_meanstd.csv' --no-checkpoints)"
   DASH_CMD="'$PYTHON' '$DASHBOARD_DRIVER' --run-name tau_refined --new-root '$ARCHIVE_OUTPUTS' --old-root '$ARCHIVE_OUTPUTS/convlstm_ref' --ref-mode BASE --report '$REPRO_OUT_DIR/REPORT.md' --figures '$REPRO_FIGS' --diagnostics '$REPRO_DIAG'"
-  FPFN_CMD="'$PYTHON' '$FPFN_DRIVER' --case-dir '$ARCHIVE_OUTPUTS/headline_s42/eval/test_inclusions_1_2' --out '$REPRO_FIGS/fpfn_inclusions_1_2.pdf'"
   PHYS_CMD2="'$PYTHON' '$PHYS_DRIVER' --run-name tau_refined --new-root '$ARCHIVE_OUTPUTS' --report '$REPRO_OUT_DIR/PHYS_REPORT.md' --figures '$REPRO_FIGS'"
 
   echo "[repro] step 1/4: seed mean±std table (no checkpoint load)"
@@ -194,10 +193,30 @@ if [[ "$FROM_OUTPUTS" == "1" ]]; then
     --diagnostics "$REPRO_DIAG"
 
   echo "[repro] step 3/4: FP/FN qualitative panel"
-  echo "[repro]   + $FPFN_CMD"
-  "$PYTHON" "$FPFN_DRIVER" \
-    --case-dir "$ARCHIVE_OUTPUTS/headline_s42/eval/test_inclusions_1_2" \
-    --out "$REPRO_FIGS/fpfn_inclusions_1_2.pdf"
+  # WR-02: do NOT hard-code test_inclusions_1_2 / a fixed eval dir. make_fpfn_panel
+  # fails loud (FileNotFoundError/KeyError) on a missing case dir or summary.json,
+  # which under `set -euo pipefail` would abort the whole light-repro on any
+  # differently-shaped archive. Instead, discover the FP/FN case from what is
+  # actually bundled (prefer the canonical representative case, else the first case
+  # with the full probs.npz+gt.npz+summary.json triple); SKIP gracefully if none.
+  FPFN_EVAL_DIR="$ARCHIVE_OUTPUTS/headline_s42/eval"
+  FPFN_CASE=""
+  if [[ -d "$FPFN_EVAL_DIR" ]]; then
+    for cand in test_inclusions_1_2 "$FPFN_EVAL_DIR"/*/; do
+      case_name="$(basename "${cand%/}")"
+      cdir="$FPFN_EVAL_DIR/$case_name"
+      if [[ -f "$cdir/probs.npz" && -f "$cdir/gt.npz" && -f "$cdir/summary.json" ]]; then
+        FPFN_CASE="$case_name"; break
+      fi
+    done
+  fi
+  if [[ -n "$FPFN_CASE" ]]; then
+    FPFN_OUT="$REPRO_FIGS/fpfn_${FPFN_CASE}.pdf"
+    echo "[repro]   + '$PYTHON' '$FPFN_DRIVER' --case-dir '$FPFN_EVAL_DIR/$FPFN_CASE' --out '$FPFN_OUT'"
+    "$PYTHON" "$FPFN_DRIVER" --case-dir "$FPFN_EVAL_DIR/$FPFN_CASE" --out "$FPFN_OUT"
+  else
+    echo "[repro]   SKIP fpfn: no bundled case with probs.npz+gt.npz+summary.json under $FPFN_EVAL_DIR"
+  fi
 
   echo "[repro] step 4/4: physical-metrics report"
   echo "[repro]   + $PHYS_CMD2"
