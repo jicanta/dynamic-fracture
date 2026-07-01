@@ -193,11 +193,16 @@ def main(argv: Sequence[str] | None = None) -> List[Tuple[str, float, float, int
     ap.add_argument(
         "--out", default=None,
         help="Output CSV path (default: <first-run-parent>/seed_meanstd.csv).")
+    ap.add_argument(
+        "--no-checkpoints", action="store_true",
+        help="skip the best.pt SHA provenance step (the per-seed SHAs are printed "
+             "only, never written to the CSV; lets the seed table regenerate from a "
+             "checkpoint-free archive tree — D-02/D-03)")
     args = ap.parse_args(argv)
 
     runs = args.runs if len(args.runs) > 1 else args.runs[0]
     rows = per_case_meanstd(runs, frac=args.frac)
-    shas = seed_shas(runs)
+    shas = {} if args.no_checkpoints else seed_shas(runs)
 
     out_path = (Path(args.out) if args.out
                 else Path(args.runs[0]).resolve().parent / "seed_meanstd.csv")
@@ -209,9 +214,10 @@ def main(argv: Sequence[str] | None = None) -> List[Tuple[str, float, float, int
         print(f"[seed] {case:30s} {mean:8.4f} {std:8.4f}")
     overall = statistics.mean(m for _, m, _, _ in rows)
     print(f"[seed] OVERALL per-case mean = {overall:.4f} over {len(rows)} cases")
-    print("[seed] provenance (D-14 — sha256 best.pt per seed):")
-    for name, sha in shas.items():
-        print(f"[seed]   {name}: {sha}")
+    if not args.no_checkpoints:
+        print("[seed] provenance (D-14 — sha256 best.pt per seed):")
+        for name, sha in shas.items():
+            print(f"[seed]   {name}: {sha}")
     return rows
 
 

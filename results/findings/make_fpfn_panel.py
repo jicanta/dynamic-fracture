@@ -24,6 +24,7 @@ Run from dynamic-fracture/:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -64,12 +65,26 @@ def _read_threshold(case_dir: Path) -> float:
     return float(summary["threshold"])
 
 
-def main() -> None:
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(
+        description="Render the FP/FN qualitative panel from real probs.npz/gt.npz.")
+    ap.add_argument(
+        "--case-dir", default=str(CASE_DIR),
+        help="case dir holding probs.npz/gt.npz/summary.json "
+             f"(default: {CASE_DIR})")
+    ap.add_argument(
+        "--out", default=str(OUT_PDF),
+        help=f"output PDF path (default: {OUT_PDF})")
+    args = ap.parse_args(argv)
+    case_dir = Path(args.case_dir)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
     # (1) load real probs + GT from the SAME seam (orientation-consistent).
-    probs, gts = load_case_probs_gt(CASE_DIR)  # (T,H,W) float32, (T,H,W) uint8
+    probs, gts = load_case_probs_gt(case_dir)  # (T,H,W) float32, (T,H,W) uint8
 
     # (2) threshold from THIS case's summary.json (0.275; never hardcode 0.5).
-    thr = _read_threshold(CASE_DIR)
+    thr = _read_threshold(case_dir)
 
     # (3) no-healing binarization (monotone over time) — matches _binarize_no_healing.
     pred = (probs >= thr).astype(np.uint8)
@@ -81,8 +96,8 @@ def main() -> None:
     titles = [f"frame {f}" for f in frames]
 
     # (5) render the FP/FN panel as a vector PDF via the audited helper.
-    save_fpfn_panel(OUT_PDF, gts, pred, frames, titles=titles)
-    print(f"[fpfn] wrote {OUT_PDF} (thr={thr}, T={T}, frames={frames})")
+    save_fpfn_panel(out, gts, pred, frames, titles=titles)
+    print(f"[fpfn] wrote {out} (thr={thr}, T={T}, frames={frames})")
 
 
 if __name__ == "__main__":
