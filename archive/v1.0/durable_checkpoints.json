@@ -1,0 +1,34 @@
+{
+  "durable_checkpoints": [
+    {
+      "name": "convlstm_base_ref.keras",
+      "durable_path": "/depot/aamp/data/jcantare/fracture-v1.0-archive/checkpoints/convlstm_base_ref.keras",
+      "sha256": "90e16bad89cd0ee41caf8a557a061d7d3409792fd55aa1798cac2e1ee6bb6498",
+      "size_bytes": 93014928
+    },
+    {
+      "name": "tau_refined_best.pt",
+      "durable_path": "/depot/aamp/data/jcantare/fracture-v1.0-archive/checkpoints/tau_refined_best.pt",
+      "sha256": "f1a0786c519b9052e5866e0517f041e4d84177da38e72671f3f5f28d33a24a0c",
+      "size_bytes": 165378331
+    },
+    {
+      "name": "headline_s42_best.pt",
+      "durable_path": "/depot/aamp/data/jcantare/fracture-v1.0-archive/checkpoints/headline_s42_best.pt",
+      "sha256": "0f55814f02aec68d76fc21b181b795a5d0ec44fe0c12173448447e93d804d805",
+      "size_bytes": 165378395
+    },
+    {
+      "name": "headline_s43_best.pt",
+      "durable_path": "/depot/aamp/data/jcantare/fracture-v1.0-archive/checkpoints/headline_s43_best.pt",
+      "sha256": "6a09694abf51408c40d04450294bce4a3f3aca65dc80aaab405dad613df7fd85",
+      "size_bytes": 165378395
+    },
+    {
+      "name": "headline_s44_best.pt",
+      "durable_path": "/depot/aamp/data/jcantare/fracture-v1.0-archive/checkpoints/headline_s44_best.pt",
+      "sha256": "f97f429e8d9f19ecb26d7b68b55e5412bc8b6a9c88d1bc96cc690a02a8270553",
+      "size_bytes": 165378395
+    }
+  ]
+}
