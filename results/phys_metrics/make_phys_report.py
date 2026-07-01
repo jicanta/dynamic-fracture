@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import os
 import statistics
 import sys
 from pathlib import Path
@@ -112,19 +113,22 @@ def _abs(rel: str | Path) -> Path:
     return p if p.is_absolute() else (REPO_ROOT / p)
 
 
-def _fig_rel(out_png: Path, fig_dir: Path) -> str:
+def _fig_rel(out_png: Path, report_dir: Path) -> str:
     """Markdown-embedded relative path for a figure.
 
     Default: relative to ``results/`` (unchanged byte-for-byte). When the report
     is written OUTSIDE the source ``results/`` tree (e.g. the self-contained
     ``archive/v1.0/`` light-repro target), that relative_to raises — fall back to
-    a path relative to the figures dir's parent (the report's own directory), so
-    the embedded link resolves from wherever the report lives.
+    a path relative to the REPORT's own directory (``report_dir``), computed with
+    ``os.path.relpath`` so it stays correct even when ``--report`` and
+    ``--figures`` are NOT siblings (WR-01: a non-sibling combo previously produced
+    a broken link, or crashed on ``Path.relative_to``). ``os.path.relpath`` emits
+    the proper ``../`` traversal for any layout.
     """
     try:
         return out_png.relative_to(_abs("results")).as_posix()
     except ValueError:
-        return out_png.relative_to(fig_dir.parent).as_posix()
+        return Path(os.path.relpath(out_png, report_dir)).as_posix()
 
 
 def _read_rows(csv_path: str | Path) -> List[Dict[str, str]]:
@@ -307,7 +311,8 @@ def _boundary_section(eval_dir: Path, cases: Sequence[str], thr: float) -> List[
 
 # ---- section 3: physical metrics (PHYS-03 / D-02) ----
 def _physical_section(
-    eval_dir: Path, cases: Sequence[str], thr: float, fig_dir: Path, rep_case: str
+    eval_dir: Path, cases: Sequence[str], thr: float, fig_dir: Path, rep_case: str,
+    report_dir: Path,
 ) -> List[str]:
     lines = [
         "## 3. Physical metrics (crack length-over-time + onset)",
@@ -340,7 +345,7 @@ def _physical_section(
             out_png = fig_dir / f"length_{case}.png"
             length_over_time_fig(pred, gtb, out_png)
             length_over_time_fig(pred, gtb, out_png.with_suffix(".pdf"))  # D-06 vector
-            rep_png_rel = _fig_rel(out_png, fig_dir)
+            rep_png_rel = _fig_rel(out_png, report_dir)
     lines.append("")
     if rep_png_rel:
         lines += [
@@ -352,7 +357,8 @@ def _physical_section(
 
 # ---- section 4: error accumulation TF-vs-AR (PHYS-04 / D-13/D-14) ----
 def _error_accum_section(
-    eval_dir: Path, cases: Sequence[str], fig_dir: Path, rep_case: str
+    eval_dir: Path, cases: Sequence[str], fig_dir: Path, rep_case: str,
+    report_dir: Path,
 ) -> List[str]:
     lines = [
         "## 4. Error accumulation (teacher-forced vs autoregressive F1)",
@@ -394,7 +400,7 @@ def _error_accum_section(
             tf_rows = _read_count_rows(tf_csv)
             f1_vs_horizon_fig(ar_rows, tf_rows, out_png)
             f1_vs_horizon_fig(ar_rows, tf_rows, out_png.with_suffix(".pdf"))  # D-06 vector
-            rep_png_rel = _fig_rel(out_png, fig_dir)
+            rep_png_rel = _fig_rel(out_png, report_dir)
     lines.append("")
     # PHYS-04 must-have: the figure is emitted from the REAL TF CSV. If the
     # representative case mismatched, fall back to the first case that has a real
@@ -411,7 +417,7 @@ def _error_accum_section(
                 out_png = fig_dir / f"f1_horizon_{case}.png"
                 f1_vs_horizon_fig(ar_rows, tf_rows, out_png)
                 f1_vs_horizon_fig(ar_rows, tf_rows, out_png.with_suffix(".pdf"))  # D-06 vector
-                rep_png_rel = _fig_rel(out_png, fig_dir)
+                rep_png_rel = _fig_rel(out_png, report_dir)
                 rep_case = case
                 break
             except ValueError:
@@ -432,7 +438,7 @@ def _error_accum_section(
 
 # ---- section 5: calibration (PHYS-05 / D-13) ----
 def _calibration_section(
-    eval_dir: Path, cases: Sequence[str], fig_dir: Path
+    eval_dir: Path, cases: Sequence[str], fig_dir: Path, report_dir: Path
 ) -> List[str]:
     lines = [
         "## 5. Calibration (reliability + ECE)",
@@ -462,7 +468,7 @@ def _calibration_section(
         out_png = fig_dir / "reliability.png"
         ece_all, _pop = reliability_fig(cat_p, cat_g, out_png)
         reliability_fig(cat_p, cat_g, out_png.with_suffix(".pdf"))  # D-06 vector
-        rel_rel = _fig_rel(out_png, fig_dir)
+        rel_rel = _fig_rel(out_png, report_dir)
         lines += [
             f"Aggregate ECE over {len(all_probs)} cases: **{ece_all:.4f}**.",
             "",
@@ -474,7 +480,7 @@ def _calibration_section(
 
 # ---- section 6: rollout stability band ----
 def _stability_section(
-    eval_dir: Path, cases: Sequence[str], fig_dir: Path
+    eval_dir: Path, cases: Sequence[str], fig_dir: Path, report_dir: Path
 ) -> List[str]:
     curves = []
     for case in cases:
@@ -484,7 +490,7 @@ def _stability_section(
     stability_band(curves, out_png, label=f"median F1 ({len(curves)} cases)")
     stability_band(curves, out_png.with_suffix(".pdf"),
                    label=f"median F1 ({len(curves)} cases)")  # D-06 vector
-    rel = _fig_rel(out_png, fig_dir)
+    rel = _fig_rel(out_png, report_dir)
     return [
         "## 6. Rollout stability",
         "",
@@ -622,12 +628,13 @@ def build_report(
         "(correctness-over-convenience mandate).",
         "",
     ]
+    report_dir = report_path.parent
     lines += _headline_section(new_root, provenance_sha)
     lines += _boundary_section(eval_dir, cases, thr)
-    lines += _physical_section(eval_dir, cases, thr, fig_dir, rep_case)
-    lines += _error_accum_section(eval_dir, cases, fig_dir, rep_case)
-    lines += _calibration_section(eval_dir, cases, fig_dir)
-    lines += _stability_section(eval_dir, cases, fig_dir)
+    lines += _physical_section(eval_dir, cases, thr, fig_dir, rep_case, report_dir)
+    lines += _error_accum_section(eval_dir, cases, fig_dir, rep_case, report_dir)
+    lines += _calibration_section(eval_dir, cases, fig_dir, report_dir)
+    lines += _stability_section(eval_dir, cases, fig_dir, report_dir)
     lines += _efficiency_section(run_dir)
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
