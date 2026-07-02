@@ -273,13 +273,79 @@ headline FractureTAU seeds have \texttt{best.pt} hashes \texttt{0f55814f02ae}
 reference is the frozen \texttt{base\_regen} run. Every number in this section
 traces to the committed per-frame metric CSVs from these runs.
 
-% ===== DROP-IN ANCHOR: Phase 9 (New-Case Generalization) — do not render yet =====
-% \subsection{New-Case Generalization}
-% \label{sec:newcase}
-% Results on the freshly-ingested .e fracture cases + a fresh from-scratch
-% ConvLSTM comparison (NEWC-02..04) land here, under the identical AR-rollout
-% protocol used for the 16 in-distribution cases above.
-% ===== END DROP-IN ANCHOR: Phase 9 =====
+% ===== Phase 9: New-Case Generalization (NEWC-02..04) =====
+\subsection{New-Case Generalization}
+\label{sec:newcase}
+
+The 16-case headline of Sec.~\ref{sec:headline} (\textbf{0.8621} macro $F_1$ for
+FractureTAU vs \textbf{0.5767} for the frozen ConvLSTM reference) measures
+\emph{in-distribution} performance. To probe generalization we additionally evaluate
+on three \emph{freshly-ingested, held-out} microstructure cases
+(\texttt{new\_MS211\_V400}, \texttt{new\_MS221\_V400}, \texttt{new\_MS231\_V400})
+that were never seen during training or threshold calibration --- an
+out-of-distribution (OOD) robustness check. Crucially, both models are used
+\emph{frozen}: the FractureTAU seeds and the ConvLSTM reference are the same
+checkpoints as the headline, and we apply the \emph{identical} AR-rollout protocol
+and the single late-rollout (last-20\%) macro-$F_1$ metric --- no retraining, no
+recalibration, no protocol or unit change. These cases are additive OOD evidence
+and are deliberately \emph{not} merged into the 16-case headline, which stays the
+distinct main result.
+
+Table~\ref{tab:newcase} and Fig.~\ref{fig:newcase} report the head-to-head. On all
+three held-out cases FractureTAU (3-seed mean $\pm$ seed std) beats the frozen
+ConvLSTM, aggregating to \textbf{0.9252} $\pm$ 0.0067 vs \textbf{0.5974}
+($\Delta = +0.3278$; wins 3/3). The one-sided Wilcoxon signed-rank test
+(H1: median$(\mathrm{TAU}-\mathrm{CNN}) > 0$) gives $W = 6.0$, $p = 0.125$,
+$n = 3$.
+
+\begin{table}[t]
+\centering
+\caption{New-case generalization (held-out / OOD): late-rollout macro $F_1$ under
+the identical AR protocol. FractureTAU is the 3-seed mean $\pm$ seed std; ConvLSTM
+is the frozen reference. Numbers are reused verbatim from the SHA-tagged 09-08
+comparison artifact (no re-derivation).}
+\label{tab:newcase}
+\small
+\begin{tabular}{lccc c}
+\toprule
+Held-out case & FractureTAU & ConvLSTM & $\Delta$ & Outcome \\
+\midrule
+\texttt{new\_MS211\_V400} & $0.9160 \pm 0.0161$ & 0.6437 & $+0.2723$ & win \\
+\texttt{new\_MS221\_V400} & $0.9277 \pm 0.0208$ & 0.6086 & $+0.3191$ & win \\
+\texttt{new\_MS231\_V400} & $0.9319 \pm 0.0085$ & 0.5398 & $+0.3921$ & win \\
+\midrule
+\textbf{Aggregate}        & $\mathbf{0.9252 \pm 0.0067}$ & \textbf{0.5974} & $+0.3278$ & 3/3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.82\linewidth]{newcase_generalization}
+\caption{Per-case late-rollout macro $F_1$ on the three held-out (OOD) cases:
+frozen FractureTAU (3-seed mean, std error bar) vs the frozen ConvLSTM reference
+under the identical AR-rollout protocol. FractureTAU wins on every case.}
+\label{fig:newcase}
+\end{figure}
+
+\paragraph{Honest small-sample framing ($n{=}3$).}
+The evidence here is the \emph{per-case table and the 3-seed mean $\pm$ std}, not a
+$p$-value. With only three paired cases the one-sided Wilcoxon's \emph{minimum}
+attainable $p$ is 0.125, so it can never reach 0.05 regardless of effect size; we
+therefore report $p = 0.125$ as \emph{indicative only} and make no statistical-
+significance claim. The consistent per-case margins ($\Delta$ from $+0.27$ to
+$+0.39$) are the substantive generalization signal.
+
+\paragraph{Provenance.}
+Every number above is reused by reference from the SHA-tagged 09-08 comparison
+artifact (\texttt{new\_model/OUTPUTS/newcase\_comparison.md}), which was computed
+directly from the per-frame metric CSVs and the actual checkpoint hashes. The three
+frozen FractureTAU seeds are the same \texttt{best.pt} checkpoints as the headline
+(\texttt{0f55814f02ae}, \texttt{6a09694abf51}, \texttt{f97f429e8d9f}); the baseline
+is the frozen ConvLSTM \texttt{base\_regen} reference; and the held-out data trace to
+the new-case DATASET SHA \texttt{1bd1e2282fc5} (over the six new-case cache files).
+No value in this subsection is hand-typed or recomputed.
+% ===== END Phase 9: New-Case Generalization =====
 
 \section{Physical-Fidelity Analysis}
 \label{sec:phys}

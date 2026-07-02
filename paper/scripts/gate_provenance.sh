@@ -23,10 +23,16 @@ REPO_DIR=$(dirname "$PAPER_DIR")
 TEX="$PAPER_DIR/main.tex"
 COMPARISON="$REPO_DIR/results/comparisons/tau_headline_vs_base_regen.md"
 PHYS="$REPO_DIR/results/phys_metrics/PHYS_REPORT.md"
+# Phase-9 new-case (held-out / OOD) head-to-head artifact (09-08). Every new-case
+# number cited in Sec.~newcase must trace back here — no hand-typed/recomputed value.
+NEWCASE="$REPO_DIR/new_model/OUTPUTS/newcase_comparison.md"
 
 # number -> source-artifact mapping (parallel arrays).
-NUMBERS=(0.8621 0.5767 1.526e-5 39.585 0.6258 0.0435)
-SOURCES=("$COMPARISON" "$COMPARISON" "$COMPARISON" "$PHYS" "$PHYS" "$PHYS")
+# First six: v1.0 headline + physics (byte-unchanged, gated to their own sources).
+# Last three: Phase-9 new-case aggregate FractureTAU mean, ConvLSTM mean, and the
+# indicative Wilcoxon p — traced to $NEWCASE so the gate can't false-pass on them.
+NUMBERS=(0.8621 0.5767 1.526e-5 39.585 0.6258 0.0435 0.9252 0.5974 0.125)
+SOURCES=("$COMPARISON" "$COMPARISON" "$COMPARISON" "$PHYS" "$PHYS" "$PHYS" "$NEWCASE" "$NEWCASE" "$NEWCASE")
 
 if [ ! -f "$TEX" ]; then
   echo "[gate_provenance] FAIL: main.tex not found at $TEX"
