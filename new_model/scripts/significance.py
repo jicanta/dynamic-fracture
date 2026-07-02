@@ -104,17 +104,20 @@ def _read_tau_csv(path: str | Path) -> List[Tuple[str, float]]:
 
 
 def pair_cases(
-    tau_percase: Sequence[Tuple[str, float]], cnn_map: dict
+    tau_percase: Sequence[Tuple[str, float]], cnn_map: dict,
+    expect_cases: int = N_BASE_CASES,
 ) -> Tuple[List[str], List[float], List[float]]:
     """Pair TAU and CNN per-case scalars by case name (sorted). Fails loud unless
-    exactly the 16 BASE cases pair up."""
+    exactly ``expect_cases`` cases pair up (default 16 = the v1.0 BASE roster; the
+    new-case run passes 3). The assert stays an EXACT-count fail-loud (``!=``, never
+    relaxed to ``>=``/``>``) so a missing paired case still aborts (D-02/Pitfall 6)."""
     tau_map = dict(tau_percase)
     common = sorted(set(tau_map) & set(cnn_map))
-    if len(common) != N_BASE_CASES:
+    if len(common) != expect_cases:
         raise SystemExit(
-            f"[sig] expected {N_BASE_CASES} paired BASE cases, got {len(common)} "
-            f"(tau={sorted(tau_map)}, cnn={sorted(cnn_map)}). The 16-case base_regen "
-            f"reference must be confirmed (RESEARCH A5/OQ2, plan-06 gate).")
+            f"[sig] expected {expect_cases} paired cases, got {len(common)} "
+            f"(tau={sorted(tau_map)}, cnn={sorted(cnn_map)}). The reference case set "
+            f"must be confirmed (16 = v1.0 BASE; 3 = the new-case roster).")
     tau = [tau_map[c] for c in common]
     cnn = [cnn_map[c] for c in common]
     return common, tau, cnn
@@ -136,6 +139,14 @@ def main(argv: Sequence[str] | None = None):
              f"Default: {DEFAULT_CNN} (RESEARCH A5/OQ2: confirm the 16-case "
              f"base_regen path before a real run — plan-06 gate).")
     ap.add_argument("--frac", type=float, default=0.20, help="late-rollout window")
+    ap.add_argument(
+        "--expect-cases", type=int, default=N_BASE_CASES,
+        help="Exact number of paired cases required (16 = v1.0 BASE; 3 = the "
+             "new-case roster for --case-set new).")
+    ap.add_argument(
+        "--eval-subdir", default="eval",
+        help="Eval subdir under each seed run to read per_frame_metrics.csv from "
+             "(eval = v1.0 canonical; eval_newcase = the Phase-9 new-case eval).")
     args = ap.parse_args(argv)
 
     # TAU side: 3-seed mean per case (or a precomputed CSV).
@@ -143,17 +154,19 @@ def main(argv: Sequence[str] | None = None):
         tau_pc = _read_tau_csv(args.tau_csv)
         seed_runs: List[Path] = []
     else:
-        seed_runs = seed_aggregate.discover_seed_runs(args.tau)
+        seed_runs = seed_aggregate.discover_seed_runs(
+            args.tau, eval_subdir=args.eval_subdir)
         if not seed_runs:
             sys.exit(f"[sig] no headline_s* seed dirs under {args.tau!r}")
-        tau_pc = seed_aggregate.tau_percase(args.tau, frac=args.frac)
+        tau_pc = seed_aggregate.tau_percase(
+            args.tau, frac=args.frac, eval_subdir=args.eval_subdir)
 
     # CNN side: frozen ConvLSTM per case.
     cnn_map = _cnn_percase(args.cnn, frac=args.frac)
     if not cnn_map:
         sys.exit(f"[sig] no frozen-ConvLSTM CSVs under {args.cnn!r}")
 
-    cases, tau, cnn = pair_cases(tau_pc, cnn_map)
+    cases, tau, cnn = pair_cases(tau_pc, cnn_map, expect_cases=args.expect_cases)
     res, d = wilcoxon_tau_gt_cnn(tau, cnn)
     median_delta = statistics.median(d)
     n_nonzero = sum(1 for x in d if x != 0.0)

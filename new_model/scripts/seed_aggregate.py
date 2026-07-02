@@ -72,38 +72,47 @@ def _sha256_file(path: str | Path) -> str:
         return h.hexdigest()
 
 
-def discover_seed_runs(root: str | Path) -> List[Path]:
-    """Return sorted ``<root>/headline_s*`` dirs that contain an ``eval/`` subdir."""
+def discover_seed_runs(
+    root: str | Path, pattern: str = "headline_s*", eval_subdir: str = EVAL_SUBDIR,
+) -> List[Path]:
+    """Return sorted ``<root>/<pattern>`` dirs that contain an ``eval_subdir/`` subdir.
+
+    ``pattern`` selects the seed-run glob (default ``headline_s*`` = the frozen v1.0
+    headline seeds — the new-case run reuses those SAME run_names, so the default is
+    kept). ``eval_subdir`` selects which eval subdir must exist (default ``eval`` =
+    v1.0 canonical; ``eval_newcase`` = the Phase-9 new-case eval)."""
     root = Path(root)
     return sorted(
-        p for p in root.glob("headline_s*")
-        if p.is_dir() and (p / EVAL_SUBDIR).is_dir()
+        p for p in root.glob(pattern)
+        if p.is_dir() and (p / eval_subdir).is_dir()
     )
 
 
-def _coerce_runs(runs) -> List[Path]:
-    """Accept either a single root (auto-discover headline_s* seed dirs) or an
-    explicit sequence of run dirs."""
+def _coerce_runs(
+    runs, pattern: str = "headline_s*", eval_subdir: str = EVAL_SUBDIR,
+) -> List[Path]:
+    """Accept either a single root (auto-discover ``pattern`` seed dirs) or an
+    explicit sequence of run dirs. ``eval_subdir`` selects the required eval subdir."""
     if isinstance(runs, (str, os.PathLike)):
         root = Path(runs)
-        discovered = discover_seed_runs(root)
+        discovered = discover_seed_runs(root, pattern=pattern, eval_subdir=eval_subdir)
         if discovered:
             return discovered
-        # A bare run dir that itself holds an eval/ subdir (single-seed call).
-        if (root / EVAL_SUBDIR).is_dir():
+        # A bare run dir that itself holds an eval_subdir/ subdir (single-seed call).
+        if (root / eval_subdir).is_dir():
             return [root]
         raise SystemExit(
-            f"[seed] no headline_s* seed dirs (with an eval/ subdir) under {root}")
+            f"[seed] no {pattern} seed dirs (with an {eval_subdir}/ subdir) under {root}")
     run_dirs = [Path(r) for r in runs]
     if not run_dirs:
         raise SystemExit("[seed] no run dirs given")
     return run_dirs
 
 
-def _case_csvs(run_dir: Path) -> Dict[str, str]:
-    """Map case-name -> per_frame_metrics.csv path under ``<run_dir>/eval`` (reuse
-    verdict.py's glob/keying)."""
-    eval_dir = run_dir / EVAL_SUBDIR
+def _case_csvs(run_dir: Path, eval_subdir: str = EVAL_SUBDIR) -> Dict[str, str]:
+    """Map case-name -> per_frame_metrics.csv path under ``<run_dir>/eval_subdir``
+    (reuse verdict.py's glob/keying)."""
+    eval_dir = run_dir / eval_subdir
     return {
         os.path.basename(os.path.dirname(p)): p
         for p in glob.glob(os.path.join(str(eval_dir), "**", "per_frame_metrics.csv"),
@@ -112,18 +121,20 @@ def _case_csvs(run_dir: Path) -> Dict[str, str]:
 
 
 def per_case_meanstd(
-    runs, frac: float = 0.20
+    runs, frac: float = 0.20, pattern: str = "headline_s*",
+    eval_subdir: str = EVAL_SUBDIR,
 ) -> List[Tuple[str, float, float, int]]:
     """Per-case late-rollout macro F1 mean±std across the seed runs.
 
-    ``runs`` may be a single root dir (auto-discovers ``headline_s*`` seed dirs) or
-    an explicit sequence of run dirs. Returns ``[(case, mean, pstdev, n_seeds), ...]``
-    sorted by case. A case must be present in EVERY seed (else ``SystemExit`` — a
-    partial 3-seed mean is not an honest error bar). The per-seed scalar is
-    ``verdict.late_rollout_macro_f1`` (no forked metric).
+    ``runs`` may be a single root dir (auto-discovers ``pattern`` seed dirs) or
+    an explicit sequence of run dirs. ``eval_subdir`` selects which eval subdir the
+    per-frame metrics are read from (default ``eval`` = v1.0 canonical). Returns
+    ``[(case, mean, pstdev, n_seeds), ...]`` sorted by case. A case must be present in
+    EVERY seed (else ``SystemExit`` — a partial 3-seed mean is not an honest error
+    bar). The per-seed scalar is ``verdict.late_rollout_macro_f1`` (no forked metric).
     """
-    run_dirs = _coerce_runs(runs)
-    per_seed = [_case_csvs(rd) for rd in run_dirs]
+    run_dirs = _coerce_runs(runs, pattern=pattern, eval_subdir=eval_subdir)
+    per_seed = [_case_csvs(rd, eval_subdir=eval_subdir) for rd in run_dirs]
     if any(not m for m in per_seed):
         empty = [str(rd) for rd, m in zip(run_dirs, per_seed) if not m]
         raise SystemExit(f"[seed] no eval CSVs under: {empty}")
@@ -146,12 +157,21 @@ def per_case_meanstd(
     return rows
 
 
-def tau_percase(runs, frac: float = 0.20) -> List[Tuple[str, float]]:
+def tau_percase(
+    runs, frac: float = 0.20, pattern: str = "headline_s*",
+    eval_subdir: str = EVAL_SUBDIR,
+) -> List[Tuple[str, float]]:
     """Per-case 3-seed MEAN late-rollout macro F1 -> ``[(case, mean), ...]``.
 
     This is the TAU side significance.py pairs against the frozen ConvLSTM (HPC-03).
+    ``pattern``/``eval_subdir`` are forwarded to ``per_case_meanstd`` so the new-case
+    run can read the ``eval_newcase`` subdir under the SAME frozen headline run_names.
     """
-    return [(case, mean) for case, mean, _std, _n in per_case_meanstd(runs, frac=frac)]
+    return [
+        (case, mean)
+        for case, mean, _std, _n in per_case_meanstd(
+            runs, frac=frac, pattern=pattern, eval_subdir=eval_subdir)
+    ]
 
 
 def seed_shas(runs) -> Dict[str, str]:
@@ -191,6 +211,15 @@ def main(argv: Sequence[str] | None = None) -> List[Tuple[str, float, float, int
              "are auto-discovered).")
     ap.add_argument("--frac", type=float, default=0.20, help="late-rollout window")
     ap.add_argument(
+        "--seed-glob", default="headline_s*",
+        help="Glob (under a single --runs root) selecting the seed run dirs "
+             "(default headline_s* = the frozen v1.0 headline seeds, reused by the "
+             "new-case run).")
+    ap.add_argument(
+        "--eval-subdir", default="eval",
+        help="Eval subdir under each seed run to read per_frame_metrics.csv from "
+             "(eval = v1.0 canonical; eval_newcase = the Phase-9 new-case eval).")
+    ap.add_argument(
         "--out", default=None,
         help="Output CSV path (default: <first-run-parent>/seed_meanstd.csv).")
     ap.add_argument(
@@ -201,7 +230,8 @@ def main(argv: Sequence[str] | None = None) -> List[Tuple[str, float, float, int
     args = ap.parse_args(argv)
 
     runs = args.runs if len(args.runs) > 1 else args.runs[0]
-    rows = per_case_meanstd(runs, frac=args.frac)
+    rows = per_case_meanstd(
+        runs, frac=args.frac, pattern=args.seed_glob, eval_subdir=args.eval_subdir)
     shas = {} if args.no_checkpoints else seed_shas(runs)
 
     out_path = (Path(args.out) if args.out
