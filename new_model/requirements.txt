@@ -6,4 +6,5 @@ pillow>=10.0
 tqdm>=4.65
 optuna>=4.0
 scipy>=1.11
-# Gilbreth install: /scratch/gilbreth/jcantare/envs/fracture-sota/bin/pip install "optuna>=4.0" scipy
+netCDF4>=1.7
+# Gilbreth install: /scratch/gilbreth/jcantare/envs/fracture-sota/bin/pip install "optuna>=4.0" scipy "netCDF4>=1.7"
