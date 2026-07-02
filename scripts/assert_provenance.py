@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 EXPECTED_SHA_PREFIX = "f1a0786c"
@@ -147,6 +148,70 @@ def _verify_archive(archive: Path, *, no_checkpoints: bool) -> None:
     print(f"ARCHIVE PROVENANCE OK: {len(files)} files, {n_ckpts} checkpoints")
 
 
+def _verify_artifact(artifact: Path, *, no_checkpoints: bool) -> None:
+    """Re-hash every ``best.pt`` referenced INSIDE a markdown artifact's provenance
+    block; fail-loud on any mismatch/missing (T-09-22).
+
+    This is the generic, prefix-independent provenance mode: it does NOT use the
+    Phase-5 hardcoded SHA prefix (which is the unrelated ``tau_refined`` headline).
+    It extracts the ``(best.pt path, sha256)`` pairs the artifact embeds — the exact
+    shape ``seed_aggregate.seed_shas`` / ``significance`` write, e.g.
+    ``- headline_s42 new_model/OUTPUTS/headline_s42/checkpoints/best.pt sha256=<hex>`` —
+    and re-hashes each actual checkpoint file. A headline artifact with no traceable
+    checkpoint is itself a fail. ``no_checkpoints`` skips the re-hash (counts the pairs
+    only) for off-cluster runs where the checkpoint store is unreachable.
+    """
+    if not artifact.is_absolute():
+        artifact = REPO_ROOT / artifact
+    if not artifact.is_file():
+        raise SystemExit(
+            f"ARTIFACT PROVENANCE FAIL: artifact {artifact} not found."
+        )
+    text = artifact.read_text()
+    pairs = re.findall(
+        r"([\w./\-]*best\.pt)\s*[:=]?\s*(?:sha256[:=])?\s*([0-9a-f]{64})", text
+    )
+    if not pairs:
+        raise SystemExit(
+            f"ARTIFACT PROVENANCE FAIL: no (best.pt, sha256) provenance pairs found "
+            f"in {artifact} — a headline artifact with no traceable checkpoint is "
+            f"itself a fail (T-09-22)."
+        )
+
+    n_ok = 0
+    for rel, want in pairs:
+        ckpt = Path(rel)
+        if not ckpt.is_absolute():
+            ckpt = REPO_ROOT / ckpt
+        if no_checkpoints:
+            continue
+        if not ckpt.is_file():
+            raise SystemExit(
+                f"ARTIFACT PROVENANCE FAIL: checkpoint {rel} referenced in {artifact} "
+                f"is MISSING (looked at {ckpt}). Pull it first, or off-cluster use "
+                f"--no-checkpoints to verify the pairs only."
+            )
+        digest = _sha256(ckpt)
+        if digest != want:
+            raise SystemExit(
+                f"ARTIFACT PROVENANCE FAIL: {rel} sha256={digest[:16]}… does NOT "
+                f"match the {want[:16]}… recorded in {artifact} — TAMPERED (T-09-22)."
+            )
+        n_ok += 1
+
+    if no_checkpoints:
+        print(
+            f"ARTIFACT PROVENANCE: {len(pairs)} checkpoint pair(s) in {artifact} "
+            f"SKIPPED re-hash (--no-checkpoints; run without it where the checkpoint "
+            f"store is reachable)"
+        )
+    else:
+        print(
+            f"ARTIFACT PROVENANCE OK: {n_ok} checkpoint(s) in {artifact} match their "
+            f"recorded sha256"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -163,12 +228,23 @@ def main() -> None:
         "checkpoints); bare flag defaults to archive/v1.0",
     )
     parser.add_argument(
+        "--check-artifact",
+        default=None,
+        help="verify a markdown artifact: extract the (best.pt path, sha256) pairs "
+        "embedded in its provenance block and re-hash the actual checkpoint files, "
+        "failing loud on any mismatch/missing (does NOT use EXPECTED_SHA_PREFIX)",
+    )
+    parser.add_argument(
         "--no-checkpoints",
         action="store_true",
         help="archive mode: verify bundled files only, skip the durable-checkpoint "
         "re-hash (for off-cluster runs where the durable store is unreachable)",
     )
     args = parser.parse_args()
+
+    if args.check_artifact is not None:
+        _verify_artifact(Path(args.check_artifact), no_checkpoints=args.no_checkpoints)
+        return
 
     if args.archive is not None:
         _verify_archive(Path(args.archive), no_checkpoints=args.no_checkpoints)
