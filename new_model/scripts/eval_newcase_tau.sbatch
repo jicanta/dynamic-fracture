@@ -9,7 +9,8 @@
 # Produces headline_s{42,43,44}/eval_newcase/<case>/per_frame_metrics.csv (3 cases each).
 
 #SBATCH --job-name=frac-newcase-tau
-#SBATCH -A standby
+#SBATCH -A alta
+#SBATCH --partition=a100-80gb
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=1
