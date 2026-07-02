@@ -1,0 +1,102 @@
+% New-Case qualitative deck (Phase-9 deliverable).
+% Embeds the 3-way still panels (GT | FractureTAU | ConvLSTM) rendered by
+%   new_model/scripts/make_newcase_gifs.py  ->  OUTPUTS/newcase_viz/<case>_panel.png
+% GIFs cannot embed in a PDF; each case slide footnotes its matching .gif filename.
+% Compiles with tectonic:  cd paper/slides && tectonic newcase_slides.tex
+% NEVER leak cluster / storage / user paths here (grep-gated, T-05-22).
+%
+% Numbers are CITED from new_model/OUTPUTS/newcase_comparison.md (09-08 artifact),
+% not re-typed as claims; the deck references that provenance-tagged source.
+\documentclass[aspectratio=169]{beamer}
+
+\usepackage{graphicx}
+\usepackage{booktabs}
+
+\usetheme{default}
+\usecolortheme{seahorse}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{caption}[numbered]
+
+% Panels are rsync'd back into new_model/OUTPUTS/newcase_viz/ (relative to this
+% file: ../../new_model/OUTPUTS/newcase_viz/). graphicspath keeps \includegraphics
+% calls filename-only so the same deck works if panels are staged elsewhere.
+\graphicspath{{../../new_model/OUTPUTS/newcase_viz/}{./}}
+
+\title{FractureTAU on Held-Out Microstructures}
+\subtitle{Qualitative 3-Way Rollout: Ground Truth vs.\ FractureTAU vs.\ ConvLSTM}
+\author{Juan Ignacio Cantarella \and Marisol Koslowski}
+\institute{Purdue University \quad (SURF 2026 --- new-case deliverable)}
+\date{\today}
+
+\begin{document}
+
+% ---- title ----
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% ---- setup ----
+\begin{frame}{Setup: three held-out cases, both models frozen}
+  \begin{itemize}
+    \item Three newly-registered, out-of-distribution microstructures:
+      \textbf{MS211}, \textbf{MS221}, \textbf{MS231} (all at $V{=}400$),
+      disjoint from the frozen 16-case in-distribution set.
+    \item Both models are \textbf{frozen} (no retraining): FractureTAU uses the
+      base / MODE-1 fracture-mask checkpoint; ConvLSTM is Kathleen's frozen
+      reference. Each rolls out \emph{independently} under the
+      \textbf{identical autoregressive protocol} (exogenous channels from GT,
+      fracture channel fed back, no-healing).
+    \item Representative seed for FractureTAU: \textbf{seed 42}
+      (\texttt{headline\_s42}); the headline aggregate below is the 3-seed mean.
+    \item Headline (late-rollout macro $F_1$), cited from the provenance-tagged
+      \texttt{newcase\_comparison.md} (09-08), \emph{not} re-typed here:
+      FractureTAU \textbf{0.9252} vs.\ ConvLSTM \textbf{0.5974}
+      --- FractureTAU wins \textbf{3/3}.
+  \end{itemize}
+  \vfill
+  {\footnotesize Panels below align GT / FractureTAU / ConvLSTM to the same
+  rollout step; the common length $L=\min$ of the three sequences (any trim is
+  logged by the render script). No frames are padded or resampled.}
+\end{frame}
+
+% ---- per-case still panels ----
+\begin{frame}{MS211 --- GT \textbar{} FractureTAU \textbar{} ConvLSTM}
+  \centering
+  \includegraphics[width=\linewidth]{new_MS211_V400_panel.png}
+  \par\vspace{0.4em}
+  {\footnotesize Still at a shared late-rollout timestep (developed fracture).
+  Animated rollout: \texttt{new\_MS211\_V400\_gt\_tau\_cnn.gif}
+  (ships alongside this PDF).}
+\end{frame}
+
+\begin{frame}{MS221 --- GT \textbar{} FractureTAU \textbar{} ConvLSTM}
+  \centering
+  \includegraphics[width=\linewidth]{new_MS221_V400_panel.png}
+  \par\vspace{0.4em}
+  {\footnotesize Still at a shared late-rollout timestep (developed fracture).
+  Animated rollout: \texttt{new\_MS221\_V400\_gt\_tau\_cnn.gif}
+  (ships alongside this PDF).}
+\end{frame}
+
+\begin{frame}{MS231 --- GT \textbar{} FractureTAU \textbar{} ConvLSTM}
+  \centering
+  \includegraphics[width=\linewidth]{new_MS231_V400_panel.png}
+  \par\vspace{0.4em}
+  {\footnotesize Still at a shared late-rollout timestep (developed fracture).
+  Animated rollout: \texttt{new\_MS231\_V400\_gt\_tau\_cnn.gif}
+  (ships alongside this PDF).}
+\end{frame}
+
+% ---- ConvLSTM reconstruction @ timestep t (3-way still) ----
+\begin{frame}{ConvLSTM reconstruction @ timestep $t$ (GT \textbar{} FractureTAU \textbar{} ConvLSTM)}
+  \centering
+  \includegraphics[width=\linewidth]{new_MS231_V400_panel.png}
+  \par\vspace{0.4em}
+  {\footnotesize Same shared timestep $t$ across all three columns. At the
+  late-rollout frame the frozen ConvLSTM reconstruction has visibly diverged from
+  ground truth, while FractureTAU tracks the developed fracture --- consistent
+  with the cited $0.9252$ vs.\ $0.5974$ late-rollout $F_1$ gap. All three columns
+  are drawn from the same aligned rollout step (no fabricated frames).}
+\end{frame}
+
+\end{document}
