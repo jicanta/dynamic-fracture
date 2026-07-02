@@ -21,7 +21,7 @@ from typing import List, Optional
 REPO_ROOT = Path(__file__).resolve().parents[2]   # src -> new_model -> dynamic-fracture
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-from case_registry import TEST_CASE_FOLDERS  # noqa: E402  (re-export; keys used in OUTPUTS/)
+from case_registry import TEST_CASE_FOLDERS, NEW_TEST_CASE_FOLDERS  # noqa: E402  (re-export; keys used in OUTPUTS/)
 
 EXTRA_CHOICES = ("none", "pressure", "vonmises", "SED")
 HEAD_TYPE_CHOICES = ("sigmoid", "monotone_delta")
@@ -124,6 +124,9 @@ class Config:
                                            # is byte-identical when left False
     viz_every: int = 25                    # save GT|pred comparison every N frames
     cases: List[str] = field(default_factory=list)  # empty = all available
+    case_set: str = "canonical"            # canonical | new (D-01): swap the
+                                           # frozen 16 roster for the disjoint
+                                           # new-case roster at eval preflight
 
     # ---- misc ----
     resume: str = "none"                   # none | auto | /path/to/last.pt

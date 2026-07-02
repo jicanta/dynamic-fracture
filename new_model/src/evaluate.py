@@ -37,14 +37,14 @@ import pandas as pd
 import torch
 from PIL import Image
 
-from .config import Config, parse_config, TEST_CASE_FOLDERS
+from .config import Config, parse_config, TEST_CASE_FOLDERS, NEW_TEST_CASE_FOLDERS
 from .data import RunCache, ensure_cache, load_runs, make_assembler
 from .model import build_model
 from .utils import amp_dtype, get_device, plot_metric_over_time, seed_everything, sha256_file
 # Repo-root shared modules (config import above already put the repo root on
 # sys.path); both pipelines route per-frame emission through this one seam (D-11).
 from frac_metrics import per_frame_metrics, CANONICAL_COLUMNS  # noqa: E402
-from case_registry import assert_manifest                       # noqa: E402
+from case_registry import assert_manifest, assert_new_manifest  # noqa: E402
 # Framework-light dashboard persistence (D-12 / METR-07): put results/ on
 # sys.path so the `dashboard` package imports; save_case_probs_gt is numpy-only.
 import sys as _sys                                              # noqa: E402
@@ -286,11 +286,22 @@ def main(cfg: Config) -> None:
     train_cfg.out_root = cfg.out_root
     train_cfg.run_name = cfg.run_name
 
-    # Fail loud (D-02) if any registered GT case folder is missing before caching.
-    assert_manifest(Path(train_cfg.data_root))
+    # D-01: pick the active roster + fail-loud manifest fn from --case-set. The
+    # canonical default keeps the frozen v1.0 16-case path byte-unchanged; "new"
+    # swaps in the disjoint NEW_TEST_CASE_FOLDERS. Fail loud on a typo/unknown
+    # value so a wrong selector can never silently fall back (T-09-16).
+    if cfg.case_set not in ("canonical", "new"):
+        raise SystemExit(
+            f"--case-set must be 'canonical' or 'new', got '{cfg.case_set}'"
+        )
+    registry = NEW_TEST_CASE_FOLDERS if cfg.case_set == "new" else TEST_CASE_FOLDERS
+    manifest_fn = assert_new_manifest if cfg.case_set == "new" else assert_manifest
 
-    wanted = cfg.cases if cfg.cases else list(TEST_CASE_FOLDERS.keys())
-    folders = [TEST_CASE_FOLDERS[c] for c in wanted if c in TEST_CASE_FOLDERS]
+    # Fail loud (D-02) if any registered GT case folder is missing before caching.
+    manifest_fn(Path(train_cfg.data_root))
+
+    wanted = cfg.cases if cfg.cases else list(registry.keys())
+    folders = [registry[c] for c in wanted if c in registry]
     ensure_cache(Path(train_cfg.data_root), train_cfg.cache_path, folders,
                  drop_first_csv=train_cfg.drop_first_csv)
 
@@ -302,13 +313,13 @@ def main(cfg: Config) -> None:
           f"val AR-F1 {state.get('best_val_f1_ar', float('nan')):.4f})")
 
     for case in wanted:
-        if case not in TEST_CASE_FOLDERS:
+        if case not in registry:
             print(f"[eval] unknown case '{case}', skipped")
             continue
-        runs = load_runs(train_cfg.cache_path, TEST_CASE_FOLDERS[case])
+        runs = load_runs(train_cfg.cache_path, registry[case])
         if not runs:
             print(f"[eval] {case}: no data under "
-                  f"{Path(train_cfg.data_root) / TEST_CASE_FOLDERS[case]}, skipped")
+                  f"{Path(train_cfg.data_root) / registry[case]}, skipped")
             continue
         for run in runs:  # normally one run folder per test case
             case_dir = run_dir / cfg.eval_dir_name / case
