@@ -31,11 +31,17 @@ Run:  cd dynamic-fracture && python -m pytest tests/test_exo2csv.py -q
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import List
 
 import netCDF4
 import numpy as np
+import pandas as pd
+
+# The repo-root sys.path shim (tests/conftest.py) puts ``dynamic-fracture/`` on
+# sys.path, so the VENDORED tool's real public API resolves.
+from tools.exo2csv_final_rev import build_var_map, convert_exodus_file, extract_sim_id
 
 SEED: int = 42
 LEN_NAME: int = 33  # Exodus MAX_STR_LENGTH-style padding for name char arrays
@@ -235,3 +241,88 @@ def test_fixture_roundtrips(tmp_path: Path) -> None:
         assert {"pressure", "vonmises", "Gc"}.issubset(elem_names)
     finally:
         nc.close()
+
+
+# ===================================================================== #
+# 09-05: tool-dependent contract tests against the VENDORED tool.        #
+# The exact DATASET schema the vendored tool emits (SED fallback path).  #
+# Written compactly (no inter-token spaces) so it is the byte-for-byte   #
+# column tuple the tool writes -- this pins T-09-12 (field mis-map).     #
+# ===================================================================== #
+EXPECTED_SCHEMA: List[str] = [
+    "x","y","ux","uy","Gc","pressure","vonmises","fracture_mask","time_ns","SED",
+]
+
+
+def _emit_case(tmp_path: Path, *, name: str = "F_SYNTH_V400_out.e",
+               nx: int = 8, ny: int = 6, n_t: int = 12,
+               emit_a_pos: bool = False) -> tuple[Path, str, List[Path]]:
+    """Build a synthetic ``.e`` and run the VENDORED tool on it.
+
+    Returns ``(exo_path, sim_id, sorted_csv_paths)``. The tool writes one CSV per
+    timestep into ``<out_root>/<sim_id>/`` -- the SAME contract the real Gilbreth
+    ``.e`` files go through (09-04/09-07), exercised here entirely off-cluster.
+    """
+    exo_path = tmp_path / name
+    make_synthetic_exo(exo_path, nx=nx, ny=ny, n_t=n_t, emit_a_pos=emit_a_pos)
+    out_root = tmp_path / "out"
+    convert_exodus_file(str(exo_path), str(out_root), print_every=1000)
+    sim_id = extract_sim_id(str(exo_path))
+    csvs = sorted((out_root / sim_id).glob("*.csv"))
+    return exo_path, sim_id, csvs
+
+
+def test_tool_emits_dataset_schema(tmp_path: Path) -> None:
+    """Round-trip a synthetic ``.e`` and pin the tool's exact emitted schema (EXO-02).
+
+    Runs the VENDORED ``convert_exodus_file`` on a small synthetic lattice, then
+    reads back the LAST emitted CSV and asserts: the header is EXACTLY the
+    DATASET schema (RAW values + already-binarized mask, SED fallback path); the
+    ``fracture_mask`` column is 0/1 integers (with >=1 positive, so the
+    ``c > 0.95`` binarization is exercised); ``ux`` recovers the RAW written
+    nodal displacement (un-scaled -- the tool does NOT apply data.py's 1e-3
+    scaling); and the CSV filename matches ``{sim_id}_t\\d{4}_...ns.csv``.
+    """
+    nx, ny, n_t = 8, 6, 12
+    exo_path, sim_id, csvs = _emit_case(tmp_path, nx=nx, ny=ny, n_t=n_t)
+    assert csvs, "the vendored tool emitted no CSVs"
+
+    last = csvs[-1]                        # highest t (zero-padded -> lexical sort)
+    df = pd.read_csv(last)
+
+    # exact schema (byte-for-byte column tuple, SED fallback path)
+    assert list(df.columns) == EXPECTED_SCHEMA
+
+    # fracture_mask already binarized to 0/1 integers, with positives present
+    mask = df["fracture_mask"].to_numpy()
+    assert set(np.unique(mask)).issubset({0, 1})
+    assert np.array_equal(mask, mask.astype(np.int64))     # integral, not float
+    assert int(mask.max()) == 1                            # c>0.95 produced 1s
+
+    # ux recovers the RAW nodal disp_x from the .e (un-scaled round-trip)
+    t_idx = int(re.search(r"_t(\d{4})_", last.name).group(1))
+    nc = netCDF4.Dataset(str(exo_path), "r")
+    try:
+        nod_map = build_var_map(nc, "name_nod_var")
+        raw_disp_x = np.asarray(
+            nc.variables[f"vals_nod_var{nod_map['disp_x']}"][t_idx], dtype=np.float32
+        )
+    finally:
+        nc.close()
+    assert np.allclose(df["ux"].to_numpy(np.float32), raw_disp_x, rtol=1e-4, atol=1e-2)
+    assert np.max(np.abs(raw_disp_x)) > 1.0e3              # O(1e4) RAW, not 1e-3-scaled
+
+    # CSV filename convention
+    assert re.fullmatch(rf"{re.escape(sim_id)}_t\d{{4}}_.*ns\.csv", last.name)
+
+
+def test_emits_all_timesteps(tmp_path: Path) -> None:
+    """The tool writes EVERY timestep (RHS-strip STOP never fires on the fixture).
+
+    The synthetic fixture keeps right-edge-strip ``pressure`` strictly positive
+    (>= 1.0 > the -0.1 threshold), so the vendored RHS-strip stop criterion never
+    triggers and the emitted CSV count equals the fixture's timestep count.
+    """
+    n_t = 12
+    _, _, csvs = _emit_case(tmp_path, n_t=n_t)
+    assert len(csvs) == n_t
