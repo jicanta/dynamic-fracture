@@ -68,3 +68,26 @@ def test_uses_greater_alternative_and_wilcox_zero_method():
 def test_unpaired_lengths_raise():
     with pytest.raises((ValueError, SystemExit)):
         significance.wilcoxon_tau_gt_cnn([0.6, 0.7], [0.5])
+
+
+# ---- retargeted exact-count pairing (09-03): the new-case roster is n=3 ----
+
+def test_pair_cases_wrong_count_raises():
+    # Only 2 cases pair up, but the new roster demands exactly 3 -> fail loud.
+    tau_pc = [("c1", 0.70), ("c2", 0.72)]
+    cnn_map = {"c1": 0.50, "c2": 0.51}
+    with pytest.raises(SystemExit):
+        significance.pair_cases(tau_pc, cnn_map, expect_cases=3)
+
+
+def test_pair_cases_matches_new_roster():
+    # Exactly 3 common cases (the real new roster) -> pairs cleanly, no raise.
+    tau_pc = [("c1", 0.70), ("c2", 0.72), ("c3", 0.68)]
+    cnn_map = {"c1": 0.50, "c2": 0.51, "c3": 0.49}
+
+    common, tau, cnn = significance.pair_cases(tau_pc, cnn_map, expect_cases=3)
+
+    assert len(common) == 3 and len(tau) == 3 and len(cnn) == 3
+    assert common == ["c1", "c2", "c3"]          # sorted case order
+    assert tau == [0.70, 0.72, 0.68]
+    assert cnn == [0.50, 0.51, 0.49]
