@@ -13,7 +13,7 @@ from source.import_datasets import csv_dataset_from_directory
 REPO_ROOT = Path(__file__).resolve().parents[2]   # source -> kathleens-model -> dynamic-fracture
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-from case_registry import TEST_CASE_FOLDERS  # noqa: E402  (re-export of the canonical 16 cases)
+from case_registry import TEST_CASE_FOLDERS, NEW_TEST_CASE_FOLDERS  # noqa: E402  (re-export: canonical 16 + disjoint new roster)
 
 
 def make_datasets(
@@ -29,7 +29,12 @@ def make_datasets(
     stats_max_files_test=None,
     add_velocity=True,
     velocity_scale=1.0 / 1000.0,
+    case_set="canonical",
 ):
+    # D-01: select the test roster. "canonical" (default) keeps the frozen v1.0
+    # 16-case loop byte-unchanged; "new" iterates the DISJOINT NEW_TEST_CASE_FOLDERS.
+    # The two dicts are never merged (D-01) -- one roster per call.
+    roster = NEW_TEST_CASE_FOLDERS if case_set == "new" else TEST_CASE_FOLDERS
     data_root = Path(data_root)
 
     common = dict(
@@ -62,7 +67,7 @@ def make_datasets(
     # ---------------------------------------------------------------------
     # Test datasets
     # ---------------------------------------------------------------------
-    for key, folder_name in TEST_CASE_FOLDERS.items():
+    for key, folder_name in roster.items():
         folder_path = data_root / folder_name
 
         datasets[key] = csv_dataset_from_directory(

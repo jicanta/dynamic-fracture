@@ -48,7 +48,7 @@ from pathlib import Path as _Path
 _REPO_ROOT = _Path(__file__).resolve().parents[1]   # kathleens-model -> dynamic-fracture
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-from case_registry import assert_manifest  # noqa: E402
+from case_registry import assert_manifest, assert_new_manifest  # noqa: E402
 
 import config
 from source import build_datasets as bd
@@ -123,6 +123,9 @@ def main() -> None:
                      help="Load a checkpoint you trained instead.")
     ap.add_argument("--cases", nargs="*", default=None,
                     help="Subset of build_datasets test keys. Default: all.")
+    ap.add_argument("--case-set", choices=["canonical", "new"], default="canonical",
+                    help="Test roster (D-01): 'canonical' = frozen v1.0 16 (default); "
+                         "'new' = disjoint NEW_TEST_CASE_FOLDERS. AR protocol unchanged.")
     ap.add_argument("--threshold", type=float, default=config.PRED_THRESHOLD)
     ap.add_argument("--max-ar-steps", type=int, default=None)
     # CMP-04: val-calibrate the decision threshold (default) instead of the
@@ -141,7 +144,11 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Fail loud (D-02) if any registered GT case folder is missing under data_root.
-    assert_manifest(Path(args.data_root))
+    # D-01: the new roster uses its own fail-loud manifest (count pin + collision guard).
+    if args.case_set == "new":
+        assert_new_manifest(Path(args.data_root))
+    else:
+        assert_manifest(Path(args.data_root))
 
     if args.model_path:
         ckpt = Path(args.model_path)
@@ -171,6 +178,7 @@ def main() -> None:
         stats_max_files_test=None,
         add_velocity=cfg["add_velocity"],
         velocity_scale=cfg["velocity_scale"],
+        case_set=args.case_set,
     )
 
     all_test_keys = [k for k in datasets_raw if k != "train"]
