@@ -1,0 +1,4 @@
+case,late_rollout_f1_mean,late_rollout_f1_std,n_seeds
+new_MS211_V400,0.915994,0.016118,3
+new_MS221_V400,0.927664,0.020807,3
+new_MS231_V400,0.931937,0.008477,3
