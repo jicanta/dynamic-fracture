@@ -77,3 +77,50 @@ def assert_dicts_identical(*dicts) -> None:
         assert d == ref, (
             f"[manifest] TEST_CASE_FOLDERS drift: {set(d.items()) ^ set(ref.items())}"
         )
+
+
+# ---- new-case registry (disjoint namespace, D-01/D-02) -------------------
+# Additive suite for Phase 9. Kept in a SEPARATE dict so the frozen canonical
+# 16 (v1.0 provenance) and its 16/17 suite-size pin above stay byte-unchanged
+# (D-01). The new roster is KNOWN (revision 2026-07-01): the active
+# TARGET_BASENAMES in the vendored exodus tool are F_MS211/221/231_V400_out.e,
+# whose emitted folder names are F_MS211/221/231_V400_out. Each carries _V400_
+# so parse_velocity reads velocity directly (D-07 branch (a); no mapping table).
+# Keys use the short OUTPUTS convention; values are the DATASET folder names.
+# Confirm names against PROCESSED_BINNED_DATA at ingest (09-04) -- high
+# confidence, but assert_new_manifest pins it fail-loud.
+NEW_TEST_CASE_FOLDERS: Dict[str, str] = {
+    "new_MS211_V400": "F_MS211_V400_out",
+    "new_MS221_V400": "F_MS221_V400_out",
+    "new_MS231_V400": "F_MS231_V400_out",
+}
+
+# Fixed-roster count pin (D-02): any missing OR extra rostered folder fails loud
+# in assert_new_manifest below. MS211/221/231 are NOT in the frozen 16.
+EXPECTED_NEW_COUNT = 3
+
+
+def assert_new_manifest(data_root) -> None:
+    """Fail loud on the new-case roster (D-02) + roster collision (EXO-03).
+
+    Clones ``assert_manifest`` over ``NEW_TEST_CASE_FOLDERS``: raises
+    ``SystemExit`` naming any rostered folder absent under ``data_root`` so an
+    evaluation run aborts at preflight rather than silently skipping a new case.
+    Pins the roster to the fixed ``EXPECTED_NEW_COUNT`` (fail loud on a
+    missing/extra rostered case) and asserts the new roster is DISJOINT from the
+    frozen canonical 16 -- a collision would silently shadow v1.0 provenance.
+    """
+    root = Path(data_root)
+    missing = [f for f in NEW_TEST_CASE_FOLDERS.values() if not (root / f).is_dir()]
+    if missing:
+        raise SystemExit(
+            f"[manifest] {len(missing)} case folders missing under "
+            f"{data_root}: {missing}"
+        )
+    assert len(NEW_TEST_CASE_FOLDERS) == EXPECTED_NEW_COUNT, (
+        f"[manifest] expected {EXPECTED_NEW_COUNT} new cases, "
+        f"got {len(NEW_TEST_CASE_FOLDERS)}"
+    )
+    overlap = set(TEST_CASE_FOLDERS.values()) & set(NEW_TEST_CASE_FOLDERS.values())
+    if overlap:
+        raise SystemExit(f"[manifest] registry collision (EXO-03): {overlap}")
