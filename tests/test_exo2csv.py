@@ -38,10 +38,14 @@ from typing import List
 import netCDF4
 import numpy as np
 import pandas as pd
+import pytest
 
 # The repo-root sys.path shim (tests/conftest.py) puts ``dynamic-fracture/`` on
-# sys.path, so the VENDORED tool's real public API resolves.
+# sys.path, so these resolve: the VENDORED tool's real public API, the downstream
+# preprocessing contract (EXO-04), and the canonical case registry (EXO-03).
 from tools.exo2csv_final_rev import build_var_map, convert_exodus_file, extract_sim_id
+from new_model.src.data import ensure_cache, load_grid, parse_velocity
+import case_registry
 
 SEED: int = 42
 LEN_NAME: int = 33  # Exodus MAX_STR_LENGTH-style padding for name char arrays
@@ -91,6 +95,9 @@ def make_synthetic_exo(
     ny: int = 6,
     n_t: int = 12,
     emit_a_pos: bool = False,
+    *,
+    drop_c: bool = False,
+    omit_connect: bool = False,
 ) -> Path:
     """Write a valid NETCDF4 ``.e`` matching the vendored tool's mesh/field layout.
 
@@ -100,6 +107,13 @@ def make_synthetic_exo(
       n_t: number of timesteps written to ``time_whole`` + every ``vals_*`` var.
       emit_a_pos: if True, emit a single ``a_pos`` element var; else emit the 12
         stress/strain components (the tool's SED fallback path).
+      drop_c: MALFORMED variant (09-05 EXO-03). If True, omit the required nodal
+        ``c`` field from ``name_nod_var`` / ``vals_nod_var*`` so the vendored
+        reader's missing-field guard raises ``KeyError``. Default False (valid).
+      omit_connect: MALFORMED variant (09-05 EXO-03). If True, keep the
+        ``num_el_blk`` dimension but write NO ``connect{b}`` variable, so the
+        vendored reader finds ``num_elem == 0`` and raises ``RuntimeError``.
+        Default False (valid). Both defaults preserve the 09-01 valid fixture.
 
     Layout written:
       * ``coordx`` / ``coordy``: meshgrid ravel of an ``nx x ny`` structured
@@ -171,12 +185,21 @@ def make_synthetic_exo(
         nc.createVariable("coordy", "f8", ("num_nodes",))[:] = coordy
         nc.createVariable("time_whole", "f8", ("time_step",))[:] = time_whole
 
-        nc.createVariable("connect1", "i4", ("num_el_in_blk1", "num_nod_per_el1"))[:] = connect1
+        # 1-based quad connectivity (skipped for the omit_connect malformed variant,
+        # leaving num_el_blk == 1 but num_elem == 0 -> vendored RuntimeError).
+        if not omit_connect:
+            nc.createVariable("connect1", "i4", ("num_el_in_blk1", "num_nod_per_el1"))[:] = connect1
 
-        # nodal field names + values (1-based var index)
-        nod_names = ["disp_x", "disp_y", "c"]
+        # nodal field names + values (1-based var index). ``drop_c`` omits the
+        # required nodal ``c`` field -> vendored missing-field KeyError.
+        if drop_c:
+            nod_names = ["disp_x", "disp_y"]
+            nod_arrays = [disp_x, disp_y]
+        else:
+            nod_names = ["disp_x", "disp_y", "c"]
+            nod_arrays = [disp_x, disp_y, c_vals]
         _encode_name_array(nc, "name_nod_var", "num_nod_var", nod_names)
-        for idx, arr in enumerate((disp_x, disp_y, c_vals), start=1):
+        for idx, arr in enumerate(nod_arrays, start=1):
             nc.createVariable(f"vals_nod_var{idx}", "f8", ("time_step", "num_nodes"))[:] = arr
 
         # element field names + values
@@ -326,3 +349,96 @@ def test_emits_all_timesteps(tmp_path: Path) -> None:
     n_t = 12
     _, _, csvs = _emit_case(tmp_path, n_t=n_t)
     assert len(csvs) == n_t
+
+
+# ---- Task 2: fail-loud guards + cache-load + naming/velocity ------------ #
+def test_missing_field_raises(tmp_path: Path) -> None:
+    """The vendored tool fails loud on malformed ``.e`` input (EXO-03, T-09-11).
+
+    A synthetic ``.e`` MISSING the required nodal ``c`` field trips the reader's
+    missing-field guard (``KeyError``); a ``.e`` with a ``num_el_blk`` block but
+    NO ``connect#`` variable (``num_elem == 0``) trips the degenerate-mesh guard
+    (``RuntimeError``). Both are input-validation controls, not silent skips.
+    """
+    missing_c = tmp_path / "F_MISSING_C_V400_out.e"
+    make_synthetic_exo(missing_c, drop_c=True)
+    with pytest.raises((KeyError, RuntimeError)):
+        convert_exodus_file(str(missing_c), str(tmp_path / "out_missing_c"), print_every=1000)
+
+    no_connect = tmp_path / "F_NO_CONNECT_V400_out.e"
+    make_synthetic_exo(no_connect, omit_connect=True)
+    with pytest.raises((KeyError, RuntimeError)):
+        convert_exodus_file(str(no_connect), str(tmp_path / "out_no_connect"), print_every=1000)
+
+
+def test_registry_collision_raises(tmp_path: Path, monkeypatch) -> None:
+    """Registry-collision guard fails loud on new/canonical overlap (EXO-03, T-09-13).
+
+    The disjointness leg of EXO-03 lives in the registry (09-02). Here the
+    ingestion path is pinned to rely on it: a new roster whose value collides
+    with a canonical ``TEST_CASE_FOLDERS`` folder (which would silently shadow
+    frozen v1.0 provenance) makes ``assert_new_manifest`` raise ``SystemExit``,
+    while the SHIPPED clean rosters stay disjoint.
+    """
+    # The real shipped rosters are disjoint (no collision in production).
+    assert set(case_registry.TEST_CASE_FOLDERS.values()).isdisjoint(
+        case_registry.NEW_TEST_CASE_FOLDERS.values()
+    )
+
+    # Construct a colliding roster (same fixed count) that reuses a canonical folder.
+    canonical_folder = next(iter(case_registry.TEST_CASE_FOLDERS.values()))
+    colliding = {
+        "new_MS211_V400": "F_MS211_V400_out",
+        "new_MS221_V400": "F_MS221_V400_out",
+        "new_COLLIDE": canonical_folder,          # collides with the frozen 16
+    }
+    monkeypatch.setattr(case_registry, "NEW_TEST_CASE_FOLDERS", colliding)
+    # Materialize every rostered folder so the missing-folder guard passes first,
+    # forcing execution to reach the collision (disjointness) raise.
+    for folder in colliding.values():
+        (tmp_path / folder).mkdir(parents=True, exist_ok=True)
+    with pytest.raises(SystemExit):
+        case_registry.assert_new_manifest(tmp_path)
+
+
+def test_loads_through_cache(tmp_path: Path) -> None:
+    """Emitted CSVs re-grid through the existing scatter cache unchanged (EXO-04, T-09-14).
+
+    Runs the vendored tool into a ``DATASET/trainDS/`` layout, then drives the
+    real ``ensure_cache`` + ``load_grid``: the grid inferred from the emitted
+    CSVs matches the fixture lattice and a ``features.npy`` is written for the
+    run. This proves the tool's RAW values + binarized mask (matching v1.0
+    DATASET) load through unchanged -- ``data.py`` ignores the extra ``time_ns``
+    column and renames ``a_pos``->``SED`` (no double-scaling).
+    """
+    nx, ny, n_t = 8, 6, 12
+    data_root = tmp_path / "DATASET"
+    # Emit into trainDS so ensure_cache can infer the grid from the emitted CSVs.
+    exo_path = data_root / "trainDS" / "F_MS211_V400_out.e"
+    exo_path.parent.mkdir(parents=True, exist_ok=True)
+    make_synthetic_exo(exo_path, nx=nx, ny=ny, n_t=n_t)
+    convert_exodus_file(str(exo_path), str(data_root / "trainDS"), print_every=1000)
+    exo_path.unlink()                          # drop the .e; keep only the CSV run
+
+    sim_id = extract_sim_id("F_MS211_V400_out.e")
+    cache = tmp_path / "cache"
+    ensure_cache(data_root, cache, ["trainDS"])
+
+    x_vals, y_vals = load_grid(cache)
+    assert len(x_vals) == nx and len(y_vals) == ny      # grid matches the lattice
+    assert (cache / "trainDS" / sim_id / "features.npy").exists()
+    assert (cache / "trainDS" / sim_id / "meta.json").exists()
+
+
+def test_naming_and_velocity(tmp_path: Path) -> None:
+    """Folder name -> velocity contract, fail-loud on unparseable (D-07 branch a, T-09-15).
+
+    ``extract_sim_id`` yields the emitted folder name, and ``data.py::parse_velocity``
+    reads the velocity from that name (branch (a): ``_V400_`` -> 400.0, no mapping
+    table). A name with no ``_V###_`` token raises ``ValueError`` -- never a
+    silent velocity default.
+    """
+    assert extract_sim_id("F_MS211_V400_out.e") == "F_MS211_V400_out"
+    assert parse_velocity("F_MS211_V400_out") == 400.0
+    with pytest.raises(ValueError):
+        parse_velocity("no_velocity_here")
