@@ -23,6 +23,24 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 from frac_metrics import per_frame_metrics, CANONICAL_COLUMNS  # noqa: E402
 
+# Shared numpy-only SED-regression seams (D-04). Both pipelines route their SED
+# emission + feedback through these ONE implementations (sibling of frac_metrics),
+# so the golden rel-L2 parity is a near-tautology (SEDREG-04/05). Like frac_metrics
+# they import NEITHER framework, so pulling them into this TF process adds no
+# TF<->PyTorch coupling. Only consumed on the guarded task == "sed_regression"
+# branch below; the segmentation path never touches them (byte-unchanged).
+from sed_metrics import per_frame_sed_metrics, CANONICAL_SED_COLUMNS  # noqa: E402
+from ar_feedback import ar_feedback  # noqa: E402
+
+# Shared numpy-only SED normalization seam (SEDREG-02 / SEDCMP-02). The SED rollout
+# reports rel-L2 on the DENORMALIZED field with the REAL train-split data_range, so
+# both pipelines denormalize through this ONE artifact loader before metrics. Like the
+# seams above it imports NEITHER framework. `sed_invert` denormalizes GT + pred;
+# `sed_data_range(art)` supplies the SSIM/PSNR scale; `sed_load` reads the versioned,
+# train-split-fit artifact (fail-loud on a stale / wrong-split one). Only consumed on
+# the guarded task == "sed_regression" branch; the segmentation path never touches them.
+from sed_norm import invert as sed_invert, data_range as sed_data_range, load as sed_load  # noqa: E402
+
 
 def metrics_from_binary(y_true_1d: np.ndarray, y_pred_1d: np.ndarray):
     """
@@ -244,6 +262,8 @@ def predict_full_simulation_continuous_ar_with_metrics(
     enforce_no_healing: bool = True,
     make_bce_plot: bool = True,
     bce_plot_path: Optional[str] = None,
+    task: str = "segmentation",
+    norm_artifact_path: Optional[str] = None,
 ):
     """
     Run a SINGLE continuous autoregressive rollout through ds_img.
@@ -285,6 +305,28 @@ def predict_full_simulation_continuous_ar_with_metrics(
     - If the final dataset batch is smaller than the current AR batch, rollout stops
       gracefully and still saves/prints metrics accumulated so far.
     """
+    # SEDCMP-02 (Phase 11): the TF-side SED rollout is now TRUSTED. The Phase-10 CR-01
+    # gate (the not-implemented refusal) is DELETED — the SED branch below reads GT from
+    # the SED TARGET channel (not the thresholded fracture channel), denormalizes BOTH GT
+    # and pred through the shared `sed_norm` artifact, and reports rel-L2 with the REAL
+    # train-split `data_range` (never the 1.0 placeholder). The denormalization artifact is
+    # the SAME versioned, train-split-fit `sed_norm.json` the PyTorch twin loads, so the
+    # SEDREG-04 cross-pipeline rel-L2 parity holds structurally (one shared seam).
+    art = None
+    if task == "sed_regression":
+        if norm_artifact_path is None:
+            # Fail loud: a SED rollout without the shared norm artifact would have no
+            # trustworthy data_range and could not denormalize — refuse rather than emit
+            # untrusted numbers (mirrors the PyTorch evaluate.py SED preflight).
+            raise ValueError(
+                "predict_full_simulation_metrics: task='sed_regression' requires "
+                "norm_artifact_path (the shared, train-split-fit sed_norm.json). "
+                "Fit it ONCE at train start and pass its path so GT+pred are "
+                "denormalized with the REAL data_range (SEDCMP-02)."
+            )
+        # Loud on a stale / non-train-fit artifact (sed_norm.load asserts schema + split).
+        art = sed_load(norm_artifact_path)
+
     os.makedirs(out_dir, exist_ok=True)
     if csv_path is None:
         csv_path = os.path.join(out_dir, "per_frame_metrics.csv")
@@ -362,6 +404,16 @@ def predict_full_simulation_continuous_ar_with_metrics(
         else:
             pred_last_eval = pred_last_bin.astype(np.float32)
 
+        if task == "sed_regression":
+            # SED feedback (D-04, SEDREG-05): the strain-energy field redistributes
+            # and is genuinely non-monotone (real min ~= -0.034), so the no-healing
+            # ratchet is DELETED, NOT adapted -- NO threshold, NO max(). Route through
+            # the shared ar_feedback seam so this rule is byte-identical to the
+            # PyTorch twin. Guarded: never runs on the frozen segmentation path above.
+            pred_last_eval = ar_feedback(
+                running_fracture_state, pred_last_raw, task="sed_regression"
+            ).astype(np.float32)
+
         # Evaluate against current GT
         for i in range(B):
             pred_mask = pred_last_eval[i]   # binary/no-heal mask for metrics + saving
@@ -423,6 +475,31 @@ def predict_full_simulation_continuous_ar_with_metrics(
             if frames_per_ns is not None:
                 row["time_ns"] = frame_counter / float(frames_per_ns)
 
+            if task == "sed_regression":
+                # SED-regression emission (SEDCMP-02): rel-L2 on the DENORMALIZED field
+                # with the REAL train-split data_range. GT is the SED TARGET channel
+                # (`current_y_gt_last` = the dataset's y target in SED mode — NOT the
+                # thresholded fracture channel), and pred is the fed-back raw continuous
+                # field (`pred_last_eval` == the model prediction; ar_feedback state=pred,
+                # no threshold/max). BOTH are denormalized through the SAME shared
+                # `sed_norm` artifact BEFORE differencing, in ONE orientation (Pitfall 9:
+                # the un-flipped model orientation for both — never mix a flipud'd array
+                # into the difference), so the reported SED error is byte-identical to the
+                # PyTorch twin (SEDREG-04). `data_range` is the real sed_data_range(art)
+                # (train-split max-min from the versioned artifact), never a 1.0 placeholder.
+                gt_sed = current_y_gt_last[i]        # SED target channel (normalized), un-flipped
+                pred_sed = pred_last_eval[i]         # fed-back raw prediction (== pred), un-flipped
+                gt_denorm = sed_invert(gt_sed, art)
+                pred_denorm = sed_invert(pred_sed, art)
+                sm = per_frame_sed_metrics(
+                    gt_denorm, pred_denorm, data_range=sed_data_range(art)
+                )
+                row = {
+                    name: (frame_counter if name == "frame_idx" else float(sm[name]))
+                    for name in CANONICAL_SED_COLUMNS
+                }
+                row["rollout_step"] = step_idx
+
             rows.append(row)
             frame_counter += 1
 
@@ -478,9 +555,16 @@ def predict_full_simulation_continuous_ar_with_metrics(
     pbar.close()
 
     df = pd.DataFrame(rows)
-    # Canonical D-13 columns first (exact order), then extra provenance columns.
+    # Canonical columns first (exact order), then extra provenance columns.
+    # D-13 canonical fracture columns for segmentation; SEDCMP-02 branches to
+    # CANONICAL_SED_COLUMNS in SED mode, because the rows are built from
+    # sed_metrics (rel_l2/mae/rmse/ssim/psnr/region_rel_l2), NOT the classification
+    # columns — mirrors the PyTorch twin (new_model/src/evaluate.py:217). Strict
+    # indexing stays fail-loud: a missing canonical column is a parity break and
+    # must raise, never softened to a column intersection.
     if not df.empty:
-        ordered = list(CANONICAL_COLUMNS) + [c for c in df.columns if c not in CANONICAL_COLUMNS]
+        canon = CANONICAL_SED_COLUMNS if task == "sed_regression" else CANONICAL_COLUMNS
+        ordered = list(canon) + [c for c in df.columns if c not in canon]
         df = df[ordered]
     df.to_csv(csv_path, index=False)
 
