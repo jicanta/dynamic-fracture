@@ -16,6 +16,36 @@ from PIL import Image
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+
+# Overlay colours, shared with make_hero_figure.py (Fig 5) so the two comparison
+# figures read with ONE legend: correct = black, over-prediction = red, missed = blue.
+WHITE = (255, 255, 255)
+BLACK = (26, 26, 26)
+RED = (196, 30, 58)     # FP: model predicted crack where GT has none (over-prediction)
+BLUE = (51, 92, 129)    # FN: GT has crack the model missed
+
+
+def _binar(m: np.ndarray) -> np.ndarray:
+    return (m > 127).astype(np.uint8)
+
+
+def overlay(pred: np.ndarray, gt: np.ndarray) -> np.ndarray:
+    """Colour a prediction against GT: black hit, red over-prediction, blue miss."""
+    p, g = _binar(pred), _binar(gt)
+    img = np.full(g.shape + (3,), WHITE, dtype=np.uint8)
+    img[(p == 1) & (g == 1)] = BLACK
+    img[(p == 1) & (g == 0)] = RED
+    img[(p == 0) & (g == 1)] = BLUE
+    return img
+
+
+def gt_image(gt: np.ndarray) -> np.ndarray:
+    """The ground-truth crack alone: black crack on white (the reference row)."""
+    g = _binar(gt)
+    img = np.full(g.shape + (3,), WHITE, dtype=np.uint8)
+    img[g == 1] = BLACK
+    return img
 
 DF = Path("/home/jicanta/Desktop/trabajo/surf-purdue-2026/dynamic-fracture")
 OUT = Path("/home/jicanta/Desktop/trabajo/surf-purdue-2026/poster/assets/paper_figures/convlstm_collapse_d9.png")
@@ -70,23 +100,21 @@ def crop_window(gt, tau, cl, H, W):
 
 def main(out: Path = OUT, titleless: bool = False):
     out.parent.mkdir(parents=True, exist_ok=True)
-    # Layout: 2 rows (model) x 4 cols (case), transposed from the original 4x2.
-    # Same tiles, same crops, same data — but each tile renders far larger inside a
-    # poster column, and the block costs ~4x less column height, which is what let
-    # the poster enlarge this figure instead of shrinking it to fit (D-11: no dead
-    # white space, figures over prose).
+    # Layout: 3 rows (Ground truth / ConvLSTM / FractureTAU) x 4 cols (case).
+    # REBUILT 2026-07-24 (user request): (1) add an explicit GROUND-TRUTH row so the
+    # reader sees the target crack before each model; (2) the two model rows are now
+    # COLOUR OVERLAYS vs GT (black = correct, red = over-prediction, blue = missed),
+    # the same encoding as Fig 5, so a single legend serves both figures and the errors
+    # are visible in colour instead of a flat grayscale mask; (3) a larger canvas so the
+    # colours are legible on the poster.
     n = len(CASES)
-    # F-07 legibility recipe (RESEARCH-PART2 G19): a much smaller figure canvas at a
-    # higher dpi so every glyph prints >= 24 pt inside the poster's Fig-3 column.
-    # figsize width shrinks 2.6*n -> 1.4*n (W_eff ~= 5.1 in after tight-bbox) and dpi
-    # rises 220 -> 400 so printed_ppi = 400 * W_eff / X_in >= 150.
-    # FIXED 2026-07-24: figure height 2.7 -> 3.4 and hspace 0.22 -> 0.34 (below). At 2.7in
-    # the two axes rows were compressed by the (a)-(d) titles + "F1 x.xx" labels, leaving
-    # each row shorter than the rotated "ConvLSTM"/"FractureTAU" ylabel -- so the two labels
-    # overflowed their rows and collided into one unreadable vertical block on the left. The
-    # extra height gives each row room for its rotated label. Width is UNCHANGED (1.4*n), so
-    # the legibility gate (printed_pt = s_min*X_in*D/P_px, P_px = saved WIDTH) is unaffected.
-    fig, axes = plt.subplots(2, n, figsize=(1.4 * n, 3.4), dpi=400)
+    # F-07 legibility recipe (RESEARCH-PART2 G19): a small figure canvas at high dpi so
+    # every glyph prints >= 24 pt inside the poster's Fig-3 column. Width is the gate lever
+    # (printed_pt = s_min*X_in*D/P_px, P_px = saved WIDTH), so it stays 1.4*n; the third row
+    # and legend only add HEIGHT, which the gate does not constrain. Height 4.53 gives each of
+    # the three rows room for its rotated label; the panels stay large enough for the colours.
+    N_ROWS = 3
+    fig, axes = plt.subplots(N_ROWS, n, figsize=(1.4 * n, 4.53), dpi=400)
     fig.patch.set_facecolor("white")
 
     for c, (case, idx, regime, cl_f1, tau_f1) in enumerate(CASES):
@@ -94,43 +122,52 @@ def main(out: Path = OUT, titleless: bool = False):
         gt, tau = load_gt_tau(case, idx)
         H, W = cl.shape
         y0, y1, x0, x1 = crop_window(gt, tau, cl, H, W)
+        gt_c = gt[y0:y1, x0:x1]
         cl_c = cl[y0:y1, x0:x1]
         tau_c = tau[y0:y1, x0:x1]
 
-        for row, (img, model, f1) in enumerate(
-            [(cl_c, "ConvLSTM", cl_f1), (tau_c, "FractureTAU", tau_f1)]
-        ):
+        # (image, row-label, F1-or-None). GT row carries no F1 (it is the reference).
+        rows = [
+            (gt_image(gt_c),          "Ground truth", None),
+            (overlay(cl_c, gt_c),     "ConvLSTM",     cl_f1),
+            (overlay(tau_c, gt_c),    "FractureTAU",  tau_f1),
+        ]
+        for row, (img, model, f1) in enumerate(rows):
             ax = axes[row, c]
-            ax.imshow(img, cmap="gray", vmin=0, vmax=255, interpolation="nearest")
+            ax.imshow(img, interpolation="nearest")
             ax.set_xticks([]); ax.set_yticks([])
             for s in ax.spines.values():
                 s.set_edgecolor("#888"); s.set_linewidth(0.8)
-            ax.text(0.5, -0.06, f"F1 {f1:.2f}", transform=ax.transAxes,
-                    ha="center", va="top", fontsize=12,
-                    color=("#B00020" if f1 < 0.4 else "#1B5E20"), fontweight="bold")
+            if f1 is not None:
+                ax.text(0.5, -0.06, f"F1 {f1:.2f}", transform=ax.transAxes,
+                        ha="center", va="top", fontsize=12,
+                        color=("#B00020" if f1 < 0.4 else "#1B5E20"), fontweight="bold")
             if c == 0:
                 ax.set_ylabel(model, fontsize=13, fontweight="bold",
                               rotation=90, labelpad=10, va="center")
 
-        # F-04: short panel label (a)-(d) keyed by column index. The per-case name /
-        # regime / frame context moves to the poster caption; a single short label is
-        # the ONLY per-column text, which is what lets >= 12 pt type fit a small cell
-        # and clear F-07's 24 pt printed bar. Regime colour (works green / collapses
-        # red) is data and is kept.
+        # F-04: short panel label (a)-(d) keyed by column index. Regime colour
+        # (works green / collapses red) is data and is kept.
         panel_label = f"({chr(ord('a') + c)})"
         axes[0, c].set_title(panel_label, fontsize=12, pad=6,
                              color=("#B00020" if regime == "collapses" else "#1B5E20"),
                              fontweight="bold")
 
+    # Shared colour legend (matches Fig 5). "correct" is the crack both GT and the model
+    # agree on; the GT row above shows that same crack in black.
+    legend = [Patch(facecolor=np.array(BLACK) / 255, label="correct"),
+              Patch(facecolor=np.array(RED) / 255, label="over-prediction"),
+              Patch(facecolor=np.array(BLUE) / 255, label="missed")]
+    fig.legend(handles=legend, loc="lower center", ncol=3, fontsize=12,
+               frameon=False, bbox_to_anchor=(0.5, 0.0),
+               handlelength=1.2, handletextpad=0.5, columnspacing=1.5)
+
     if titleless:
-        # Reviewer request (v2.0): the poster caption already carries this context,
-        # so the embedded suptitle band is removed and the strip it occupied reclaimed.
-        # Per-tile "F1 x.xx" labels and the per-case subplot titles are DATA — kept.
-        fig.tight_layout(rect=(0, 0, 1, 1))
+        fig.tight_layout(rect=(0, 0.05, 1, 1))
     else:
         fig.suptitle("D-9 rollout: ConvLSTM collapse vs FractureTAU (BASE-frozen)",
                      fontsize=12.5, fontweight="bold", y=0.995)
-        fig.tight_layout(rect=(0, 0, 1, 0.985))
+        fig.tight_layout(rect=(0, 0.05, 1, 0.985))
     fig.subplots_adjust(hspace=0.34, wspace=0.08)
     fig.savefig(out, dpi=400, facecolor="white", bbox_inches="tight")
     print("wrote", out)
