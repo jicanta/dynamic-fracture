@@ -111,10 +111,10 @@ def main(out: Path = OUT, titleless: bool = False):
     # F-07 legibility recipe (RESEARCH-PART2 G19): a small figure canvas at high dpi so
     # every glyph prints >= 24 pt inside the poster's Fig-3 column. Width is the gate lever
     # (printed_pt = s_min*X_in*D/P_px, P_px = saved WIDTH), so it stays 1.4*n; the third row
-    # and legend only add HEIGHT, which the gate does not constrain. Height 4.53 gives each of
+    # and legend only add HEIGHT, which the gate does not constrain. Height 4.7 gives each of
     # the three rows room for its rotated label; the panels stay large enough for the colours.
     N_ROWS = 3
-    fig, axes = plt.subplots(N_ROWS, n, figsize=(1.4 * n, 4.53), dpi=400)
+    fig, axes = plt.subplots(N_ROWS, n, figsize=(1.4 * n, 4.7), dpi=400)
     fig.patch.set_facecolor("white")
 
     for c, (case, idx, regime, cl_f1, tau_f1) in enumerate(CASES):
