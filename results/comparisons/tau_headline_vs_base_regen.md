@@ -1,4 +1,5 @@
-# FractureTAU (3-seed headline) vs frozen from-scratch ConvLSTM (base_regen)
+# FractureTAU (3-seed headline) vs frozen published ConvLSTM (base_regen)
+> Note: "base_regen" denotes regenerated baseline OUTPUTS (published frozen .keras run inference-only through the shared metric seam), not retrained weights.
 
 _Computed 2026-06-26 locally from measured per-frame CSVs (D-05/D-06). Late-rollout (last-20%) macro F1, D-03 degenerate-aware. Headline = headline_s42/43/44 final tuned recipe (tversky_beta=0.602, tau translator). Regenerate: `python -m scripts.significance --tau OUTPUTS --cnn ../kathleens-model/OUTPUTS/base_regen`._
 
