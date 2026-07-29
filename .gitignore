@@ -12,3 +12,13 @@ __pycache__/
 # regenerates the headline artifacts here (default; outside the sha256-tracked
 # archive/v1.0/ tree) so it never tampers the bundled archive. Scratch, not committed.
 archive/repro-out/
+
+# Proprietary simulation data must never enter this public tree (paper 2.6).
+# Raw per-timestep CSVs live only on Gilbreth scratch; DATASET/ holds placeholders.
+new_model/DATASET/*
+!new_model/DATASET/README.md
+!new_model/DATASET/trainDS/
+new_model/DATASET/trainDS/*
+!new_model/DATASET/trainDS/.gitkeep
+ALL_INPUTS/DATASET/*
+!ALL_INPUTS/DATASET/placeholder
