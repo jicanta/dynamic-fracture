@@ -9,9 +9,16 @@ scratch and is symlinked into `new_model/DATASET/` (not committed).
 
 ## Grid
 
-- Grid resolution: **W=321 × H=161**, inferred once from the first training CSV
-  and frozen in `DATASET/_cache/grid.json`. Both pipelines re-use the identical
-  grid so masks are pixel-aligned.
+- Grid resolution: **H=321 × W=161** (321 rows of unique `y`, 161 columns of
+  unique `x` — i.e. the domain is 161 wide by 321 tall, **portrait**; 51,681
+  cells). Inferred once from the first training CSV and frozen in
+  `DATASET/_cache/grid.json`. Both pipelines re-use the identical grid so masks
+  are pixel-aligned.
+  > Corrected 2026-07-29: this line previously read "W=321 × H=161", which is
+  > backwards. Both pipelines define `H = len(y_vals)`, `W = len(x_vals)`
+  > (`new_model/src/data.py`, `ALL_INPUTS/CODE/source/mapping.py::GridSpec`), and
+  > every emitted `per_frame_metrics.csv` carries `H=321, W=161`. The inverted
+  > reading had already caused rotated microstructure panels in a poster build.
 
 ## Train / validation split (DATA-02)
 
